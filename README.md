@@ -1,5 +1,7 @@
 # XYZShow
 
+![XYZShow main screen](screenshots/XYZShow_main.jpg)
+
 XYZShow is a small native Android molecular viewer for local XYZ files and Gaussian frequency outputs.
 
 ## Features

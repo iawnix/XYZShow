@@ -1,6 +1,8 @@
 # XYZShow
 
-![XYZShow main screen](screenshots/XYZShow_main.jpg)
+<p align="center">
+  <img src="screenshots/XYZShow_main.jpg" alt="XYZShow main screen" width="360" />
+</p>
 
 XYZShow is a small native Android molecular viewer for local XYZ files and Gaussian frequency outputs.
 

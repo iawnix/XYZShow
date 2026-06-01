@@ -33,7 +33,15 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class SourceActivity extends Activity {
+    static final String EXTRA_TITLE = "io.iaw.molview.extra.SOURCE_TITLE";
+    static final String EXTRA_KIND = "io.iaw.molview.extra.SOURCE_KIND";
+    static final String EXTRA_LOCATION = "io.iaw.molview.extra.SOURCE_LOCATION";
+
     private static final int PAGE_LINES = 400;
+    private static final String STATE_TITLE = "source_title";
+    private static final String STATE_KIND = "source_kind";
+    private static final String STATE_LOCATION = "source_location";
+    private static final String STATE_PAGE = "source_page";
 
     private LinearLayout root;
     private LinearLayout header;
@@ -43,6 +51,7 @@ public final class SourceActivity extends Activity {
     private TextView pagerView;
     private TextView gutterView;
     private TextView sourceView;
+    private ImageButton firstButton;
     private ImageButton prevButton;
     private ImageButton nextButton;
     private ImageButton lastButton;
@@ -50,6 +59,9 @@ public final class SourceActivity extends Activity {
     private ScrollView vertical;
     private final ExecutorService sourceExecutor = Executors.newSingleThreadExecutor();
     private final List<String> currentPageLines = new ArrayList<>();
+    private String sourceTitle = "";
+    private String sourceLocation = "";
+    private int sourceKind = SourceTextStore.KIND_NONE;
     private int totalLines = 1;
     private int page;
     private boolean light;
@@ -59,9 +71,19 @@ public final class SourceActivity extends Activity {
         super.onCreate(savedInstanceState);
         light = AppTheme.isLight(this);
         AppTheme.applySystemBars(this, light);
+        int initialPage = restoreSource(savedInstanceState);
         buildLayout();
-        titleView.setText(SourceTextStore.title());
-        renderPage(0);
+        titleView.setText(sourceTitle);
+        renderPage(initialPage);
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        outState.putString(STATE_TITLE, sourceTitle);
+        outState.putInt(STATE_KIND, sourceKind);
+        outState.putString(STATE_LOCATION, sourceLocation);
+        outState.putInt(STATE_PAGE, page);
     }
 
     @Override
@@ -111,6 +133,15 @@ public final class SourceActivity extends Activity {
         pagerBar.setGravity(Gravity.CENTER_VERTICAL);
         pagerBar.setPadding(dp(8), dp(8), dp(10), dp(8));
         pagerBar.setBackground(round(AppTheme.panel(light), dp(12)));
+
+        firstButton = iconButton("第一页", R.drawable.ic_page_first);
+        firstButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                renderPage(0);
+            }
+        });
+        pagerBar.addView(firstButton, iconLayout(true));
 
         prevButton = iconButton("上一页", R.drawable.ic_page_prev);
         prevButton.setOnClickListener(new View.OnClickListener() {
@@ -166,6 +197,8 @@ public final class SourceActivity extends Activity {
         gutterView.setTypeface(Typeface.MONOSPACE);
         gutterView.setIncludeFontPadding(false);
         gutterView.setLineSpacing(0f, 1.08f);
+        gutterView.setSingleLine(false);
+        gutterView.setHorizontallyScrolling(true);
         gutterView.setPadding(dp(8), 0, dp(8), 0);
         editor.addView(gutterView, new LinearLayout.LayoutParams(dp(68), LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -180,6 +213,8 @@ public final class SourceActivity extends Activity {
         sourceView.setTextIsSelectable(true);
         sourceView.setIncludeFontPadding(false);
         sourceView.setLineSpacing(0f, 1.08f);
+        sourceView.setSingleLine(false);
+        sourceView.setHorizontallyScrolling(true);
         sourceView.setPadding(dp(12), 0, 0, 0);
         editor.addView(sourceView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
 
@@ -321,6 +356,7 @@ public final class SourceActivity extends Activity {
                 "Page %d/%d",
                 page + 1,
                 pageCount()));
+        firstButton.setEnabled(page > 0);
         prevButton.setEnabled(page > 0);
         nextButton.setEnabled(page + 1 < pageCount());
         lastButton.setEnabled(page + 1 < pageCount());
@@ -363,10 +399,10 @@ public final class SourceActivity extends Activity {
 
     private BufferedReader openReader() throws IOException {
         InputStream input;
-        if (SourceTextStore.kind() == SourceTextStore.KIND_URI) {
-            input = getContentResolver().openInputStream(Uri.parse(SourceTextStore.location()));
-        } else if (SourceTextStore.kind() == SourceTextStore.KIND_ASSET) {
-            input = getAssets().open(SourceTextStore.location());
+        if (sourceKind == SourceTextStore.KIND_URI) {
+            input = getContentResolver().openInputStream(Uri.parse(sourceLocation));
+        } else if (sourceKind == SourceTextStore.KIND_ASSET) {
+            input = getAssets().open(sourceLocation);
         } else {
             input = null;
         }
@@ -378,6 +414,7 @@ public final class SourceActivity extends Activity {
 
     private void setLoading(boolean loading) {
         loadingView.setVisibility(loading ? View.VISIBLE : View.GONE);
+        firstButton.setEnabled(!loading && page > 0);
         prevButton.setEnabled(!loading && page > 0);
         nextButton.setEnabled(!loading && page + 1 < pageCount());
         lastButton.setEnabled(!loading && page + 1 < pageCount());
@@ -398,7 +435,7 @@ public final class SourceActivity extends Activity {
                 sourceView.setPadding(dp(12), 0,
                         dp(16) + insets.getSystemWindowInsetRight(),
                         insets.getSystemWindowInsetBottom());
-                gutterView.setPadding(dp(8) + insets.getSystemWindowInsetLeft(), 0, dp(8), insets.getSystemWindowInsetBottom());
+                gutterView.setPadding(dp(8), 0, dp(8), insets.getSystemWindowInsetBottom());
                 return insets;
             }
         });
@@ -411,6 +448,28 @@ public final class SourceActivity extends Activity {
 
     private int gutterBg() {
         return light ? 0xffefeff1 : 0xff202022;
+    }
+
+    private int restoreSource(Bundle state) {
+        if (state != null) {
+            sourceTitle = state.getString(STATE_TITLE, "");
+            sourceKind = state.getInt(STATE_KIND, SourceTextStore.KIND_NONE);
+            sourceLocation = state.getString(STATE_LOCATION, "");
+            return Math.max(0, state.getInt(STATE_PAGE, 0));
+        }
+        sourceTitle = getIntent().getStringExtra(EXTRA_TITLE);
+        if (sourceTitle == null || sourceTitle.isEmpty()) {
+            sourceTitle = SourceTextStore.title();
+        }
+        sourceKind = getIntent().getIntExtra(EXTRA_KIND, SourceTextStore.KIND_NONE);
+        sourceLocation = getIntent().getStringExtra(EXTRA_LOCATION);
+        if (sourceKind == SourceTextStore.KIND_NONE) {
+            sourceKind = SourceTextStore.kind();
+        }
+        if (sourceLocation == null || sourceLocation.isEmpty()) {
+            sourceLocation = SourceTextStore.location();
+        }
+        return 0;
     }
 
     private static final class PageData {

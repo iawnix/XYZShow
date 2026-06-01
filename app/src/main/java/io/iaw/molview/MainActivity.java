@@ -65,6 +65,12 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private static final int COLOR_LIGHT_TEXT_DISABLED = 0xffa1a1a6;
     private static final String DEFAULT_ASSET = "samples/dopamine.xyz";
     private static final int MAX_PARSE_BYTES = 8 * 1024 * 1024;
+    private static final String STATE_SOURCE_KIND = "source_kind";
+    private static final String STATE_SOURCE_URI = "source_uri";
+    private static final String STATE_ASSET_PATH = "asset_path";
+    private static final String STATE_SOURCE_LABEL = "source_label";
+    private static final String STATE_FILE_NAME = "file_name";
+    private static final String STATE_SOURCE_TITLE = "source_title";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService loadExecutor = Executors.newSingleThreadExecutor();
@@ -108,7 +114,22 @@ public final class MainActivity extends Activity implements View.OnClickListener
         lightBackground = AppTheme.isLight(this);
         configureSystemBars();
         buildLayout();
-        loadDefaultMolecule();
+        if (!restoreLoadedMolecule(savedInstanceState)) {
+            loadDefaultMolecule();
+        }
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        super.onSaveInstanceState(outState);
+        int sourceKind = currentSourceUri != null ? SourceTextStore.KIND_URI
+                : currentAssetPath.isEmpty() ? SourceTextStore.KIND_NONE : SourceTextStore.KIND_ASSET;
+        outState.putInt(STATE_SOURCE_KIND, sourceKind);
+        outState.putString(STATE_SOURCE_URI, currentSourceUri == null ? "" : currentSourceUri.toString());
+        outState.putString(STATE_ASSET_PATH, currentAssetPath);
+        outState.putString(STATE_SOURCE_LABEL, currentSourceLabel);
+        outState.putString(STATE_FILE_NAME, currentFileName);
+        outState.putString(STATE_SOURCE_TITLE, currentSourceTitle);
     }
 
     @Override
@@ -344,6 +365,8 @@ public final class MainActivity extends Activity implements View.OnClickListener
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
+        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
                 "chemical/x-xyz",
                 "text/plain",
@@ -360,6 +383,15 @@ public final class MainActivity extends Activity implements View.OnClickListener
             return;
         }
         Uri uri = data.getData();
+        int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
+                | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
+            try {
+                getContentResolver().takePersistableUriPermission(uri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION);
+            } catch (SecurityException ignored) {
+            }
+        }
         String name = displayName(uri);
         currentSourceUri = uri;
         currentAssetPath = "";
@@ -377,6 +409,42 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentFileName = DEFAULT_ASSET;
         currentSourceTitle = "Default  -  " + DEFAULT_ASSET;
         loadMoleculeAsync(new AssetLoader(DEFAULT_ASSET), "Default", DEFAULT_ASSET);
+    }
+
+    private boolean restoreLoadedMolecule(Bundle state) {
+        if (state == null) {
+            return false;
+        }
+        int sourceKind = state.getInt(STATE_SOURCE_KIND, SourceTextStore.KIND_NONE);
+        String fileName = state.getString(STATE_FILE_NAME, "");
+        String sourceLabel = state.getString(STATE_SOURCE_LABEL, "");
+        currentSourceTitle = state.getString(STATE_SOURCE_TITLE, "");
+        if (sourceKind == SourceTextStore.KIND_URI) {
+            String uriText = state.getString(STATE_SOURCE_URI, "");
+            if (uriText == null || uriText.isEmpty()) {
+                return false;
+            }
+            Uri uri = Uri.parse(uriText);
+            currentSourceUri = uri;
+            currentAssetPath = "";
+            currentSourceLabel = sourceLabel.isEmpty() ? "File" : sourceLabel;
+            currentFileName = fileName.isEmpty() ? displayName(uri) : fileName;
+            loadMoleculeAsync(new UriLoader(uri, currentFileName), currentSourceLabel, currentFileName);
+            return true;
+        }
+        if (sourceKind == SourceTextStore.KIND_ASSET) {
+            String assetPath = state.getString(STATE_ASSET_PATH, "");
+            if (assetPath == null || assetPath.isEmpty()) {
+                return false;
+            }
+            currentSourceUri = null;
+            currentAssetPath = assetPath;
+            currentSourceLabel = sourceLabel.isEmpty() ? "Default" : sourceLabel;
+            currentFileName = fileName.isEmpty() ? assetPath : fileName;
+            loadMoleculeAsync(new AssetLoader(assetPath), currentSourceLabel, currentFileName);
+            return true;
+        }
+        return false;
     }
 
     private void loadMoleculeAsync(final MoleculeLoader loader, final String sourceLabel, final String fileName) {
@@ -660,10 +728,19 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
         if (currentSourceUri != null) {
             SourceTextStore.setUri(sourceTitleText(), currentSourceUri.toString());
+            Intent intent = new Intent(this, SourceActivity.class);
+            intent.putExtra(SourceActivity.EXTRA_TITLE, sourceTitleText());
+            intent.putExtra(SourceActivity.EXTRA_KIND, SourceTextStore.KIND_URI);
+            intent.putExtra(SourceActivity.EXTRA_LOCATION, currentSourceUri.toString());
+            startActivity(intent);
         } else {
             SourceTextStore.setAsset(sourceTitleText(), currentAssetPath);
+            Intent intent = new Intent(this, SourceActivity.class);
+            intent.putExtra(SourceActivity.EXTRA_TITLE, sourceTitleText());
+            intent.putExtra(SourceActivity.EXTRA_KIND, SourceTextStore.KIND_ASSET);
+            intent.putExtra(SourceActivity.EXTRA_LOCATION, currentAssetPath);
+            startActivity(intent);
         }
-        startActivity(new Intent(this, SourceActivity.class));
     }
 
     private boolean hasSourceReference() {

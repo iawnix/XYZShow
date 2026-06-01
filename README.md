@@ -1,7 +1,7 @@
 # XYZShow
 
 <p align="center">
-  <img src="screenshots/XYZShow_main.jpg" alt="XYZShow main screen" width="360" />
+  <img src="screenshots/XYZShow_showcase.jpg" alt="XYZShow molecule viewer, source viewer, and details screens" width="900" />
 </p>
 
 XYZShow is a small native Android molecular viewer for local XYZ files and Gaussian frequency outputs.
@@ -53,19 +53,19 @@ The release helper creates local-only signing material under `local-signing/` on
 The latest verified release APK from this snapshot is included at:
 
 ```text
-releases/XYZShow-release-0.4.3.apk
+releases/XYZShow-release-0.4.5.apk
 ```
 
 Release metadata from the local build:
 
 - package: `io.iaw.xyzshow`
-- version: `0.4.3` (`versionCode 18`)
-- size: `108,168` bytes
-- SHA-256: `94a0acbfbec5bb4f6eb4ffa958e25beca42ddfb8af41f06a1cc6cd2226696ee3`
+- version: `0.4.5` (`versionCode 20`)
+- size: `112,320` bytes
+- SHA-256: `c139b2048c145bd7e52195f31bec491c7f24152676ba04d9569a15afde7ee6e9`
 - signing: release-signed, `apksigner verify` passed
 
 ## Scope
 
-Current version: `0.4.3`.
+Current version: `0.4.5`.
 
 PDB, mmCIF, checkpoint files, formatted checkpoint files, cube/volume data, cloud sync, and Play Store release packaging are not included in this snapshot.

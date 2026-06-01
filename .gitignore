@@ -1,4 +1,5 @@
 .gradle/
+.gradle-home/
 build/
 app/build/
 local.properties
@@ -9,6 +10,7 @@ local.properties
 *.p12
 *.pem
 *.key
+*.idsig
 *.log
 *.out
 *.chk
@@ -25,3 +27,7 @@ local.properties
 captures/
 externalNativeBuild/
 .cxx/
+
+# Local release signing material. Keep this private and out of published source.
+local-signing/
+*.env

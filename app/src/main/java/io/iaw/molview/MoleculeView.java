@@ -32,6 +32,7 @@ final class MoleculeView extends GLSurfaceView {
     private float zoom = 1f;
     private float panX = 0f;
     private float panY = 0f;
+    private float fitZoom = 1f;
     private float lastX;
     private float lastY;
     private float lastSpan;
@@ -56,7 +57,8 @@ final class MoleculeView extends GLSurfaceView {
         this.vibrationPhase = 0f;
         this.yaw = -0.55f;
         this.pitch = 0.45f;
-        this.zoom = 1f;
+        this.fitZoom = fitZoomFor(this.molecule);
+        this.zoom = fitZoom;
         this.panX = 0f;
         this.panY = 0f;
         queueEvent(new Runnable() {
@@ -137,7 +139,8 @@ final class MoleculeView extends GLSurfaceView {
     void resetView() {
         yaw = -0.55f;
         pitch = 0.45f;
-        zoom = 1f;
+        fitZoom = fitZoomFor(molecule);
+        zoom = fitZoom;
         panX = 0f;
         panY = 0f;
         queueCamera();
@@ -253,6 +256,37 @@ final class MoleculeView extends GLSurfaceView {
 
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    private float fitZoomFor(Molecule molecule) {
+        if (molecule == null || molecule.atomCount() == 0) {
+            return 1f;
+        }
+        Molecule.Frame frame = molecule.frameAt(0);
+        float[] xyz = frame.xyz;
+        if (xyz.length < 3) {
+            return 1f;
+        }
+        float minX = Float.MAX_VALUE;
+        float minY = Float.MAX_VALUE;
+        float minZ = Float.MAX_VALUE;
+        float maxX = -Float.MAX_VALUE;
+        float maxY = -Float.MAX_VALUE;
+        float maxZ = -Float.MAX_VALUE;
+        for (int i = 0; i + 2 < xyz.length; i += 3) {
+            minX = Math.min(minX, xyz[i]);
+            minY = Math.min(minY, xyz[i + 1]);
+            minZ = Math.min(minZ, xyz[i + 2]);
+            maxX = Math.max(maxX, xyz[i]);
+            maxY = Math.max(maxY, xyz[i + 1]);
+            maxZ = Math.max(maxZ, xyz[i + 2]);
+        }
+        float extent = Math.max(1f, molecule.maxExtentForFrame(0));
+        float width = Math.max(0.25f, (maxX - minX) / extent);
+        float height = Math.max(0.25f, (maxY - minY) / extent);
+        float depth = Math.max(0.25f, (maxZ - minZ) / extent);
+        float projected = Math.max(width, Math.max(height, depth)) * 0.5f;
+        return clamp(0.8f / projected, 0.7f, 5.5f);
     }
 
     private static final class MoleculeRenderer implements Renderer {

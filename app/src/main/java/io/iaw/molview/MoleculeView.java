@@ -203,6 +203,10 @@ final class MoleculeView extends GLSurfaceView {
             lastSpan = 0f;
             if (event.getPointerCount() - 1 >= 2) {
                 rememberPinch(event);
+            } else {
+                int remaining = event.getActionIndex() == 0 ? 1 : 0;
+                lastX = event.getX(remaining);
+                lastY = event.getY(remaining);
             }
             return true;
         }

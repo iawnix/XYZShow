@@ -17,7 +17,6 @@ import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.Window;
 import android.view.WindowInsets;
 import android.widget.Button;
 import android.widget.FrameLayout;
@@ -65,6 +64,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private static final int COLOR_LIGHT_TEXT_SECONDARY = 0xff6e6e73;
     private static final int COLOR_LIGHT_TEXT_DISABLED = 0xffa1a1a6;
     private static final String DEFAULT_ASSET = "samples/dopamine.xyz";
+    private static final int MAX_PARSE_BYTES = 8 * 1024 * 1024;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService loadExecutor = Executors.newSingleThreadExecutor();
@@ -80,6 +80,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private ImageButton modeButton;
     private ImageButton resetButton;
     private ImageButton themeButton;
+    private ImageButton sourceButton;
     private ImageButton infoButton;
     private ProgressBar loadingView;
     private LinearLayout rootLayout;
@@ -90,19 +91,21 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private Molecule current;
     private String currentFileName = "";
     private String currentSourceLabel = "";
+    private Uri currentSourceUri;
+    private String currentAssetPath = "";
+    private String currentSourceTitle = "";
     private boolean playing;
     private boolean lightBackground;
     private boolean loading;
     private int vibrationIndex;
     private int vibrationTick;
-    private int previewTicksRemaining;
 
     private final Runnable playTick = new PlaybackTick();
-    private final Runnable vibrationPreviewTick = new VibrationPreviewTick();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        lightBackground = AppTheme.isLight(this);
         configureSystemBars();
         buildLayout();
         loadDefaultMolecule();
@@ -112,7 +115,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
     protected void onPause() {
         super.onPause();
         stopPlayback();
-        stopVibrationPreview();
         if (moleculeView != null) {
             moleculeView.onPause();
         }
@@ -129,7 +131,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
     @Override
     protected void onDestroy() {
         stopPlayback();
-        stopVibrationPreview();
         loadGeneration.incrementAndGet();
         loadExecutor.shutdownNow();
         super.onDestroy();
@@ -159,6 +160,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         themeButton = railButton("Toggle background", R.drawable.ic_bg_dark);
         themeButton.setId(8);
         themeButton.setOnClickListener(this);
+        sourceButton = railButton("Source text", R.drawable.ic_source);
+        sourceButton.setId(10);
+        sourceButton.setOnClickListener(this);
         infoButton = railButton("Details", R.drawable.ic_info);
         infoButton.setId(9);
         infoButton.setOnClickListener(this);
@@ -172,6 +176,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         topToolBar.addView(modeButton, railLayout());
         topToolBar.addView(resetButton, railLayout());
         topToolBar.addView(themeButton, railLayout());
+        topToolBar.addView(sourceButton, railLayout());
         topToolBar.addView(infoButton, railLayoutLast());
 
         titleView = label("", 15, COLOR_TEXT);
@@ -243,12 +248,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
     }
 
     private void configureSystemBars() {
-        Window window = getWindow();
-        window.setStatusBarColor(lightBackground ? COLOR_LIGHT_PANEL : COLOR_PANEL);
-        window.setNavigationBarColor(lightBackground ? COLOR_LIGHT_PANEL : COLOR_PANEL);
-        window.getDecorView().setSystemUiVisibility(lightBackground
-                ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
-                : 0);
+        AppTheme.applySystemBars(this, lightBackground);
     }
 
     private void applySystemInsets(
@@ -314,9 +314,12 @@ public final class MainActivity extends Activity implements View.OnClickListener
             moleculeView.resetView();
         } else if (id == 8) {
             lightBackground = !lightBackground;
+            AppTheme.setLight(this, lightBackground);
             applyChromeTheme();
         } else if (id == 9) {
             showDetailsPage();
+        } else if (id == 10) {
+            showSourcePage();
         }
     }
 
@@ -358,31 +361,40 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
         Uri uri = data.getData();
         String name = displayName(uri);
+        currentSourceUri = uri;
+        currentAssetPath = "";
+        currentSourceLabel = "File";
+        currentFileName = name;
+        currentSourceTitle = "File  -  " + name;
         loadMoleculeAsync(new UriLoader(uri, name), "File", name);
     }
 
     private void loadDefaultMolecule() {
         stopPlayback();
+        currentSourceUri = null;
+        currentAssetPath = DEFAULT_ASSET;
+        currentSourceLabel = "Default";
+        currentFileName = DEFAULT_ASSET;
+        currentSourceTitle = "Default  -  " + DEFAULT_ASSET;
         loadMoleculeAsync(new AssetLoader(DEFAULT_ASSET), "Default", DEFAULT_ASSET);
     }
 
     private void loadMoleculeAsync(final MoleculeLoader loader, final String sourceLabel, final String fileName) {
         final int generation = loadGeneration.incrementAndGet();
         stopPlayback();
-        stopVibrationPreview();
         setLoading(true, "Loading " + fileName + "...");
         loadExecutor.execute(new Runnable() {
             @Override
             public void run() {
                 try {
-                    final Molecule molecule = loader.load();
+                    final LoadedMolecule loaded = loader.load();
                     handler.post(new Runnable() {
                         @Override
                         public void run() {
                             if (generation != loadGeneration.get()) {
                                 return;
                             }
-                            displayMolecule(molecule, sourceLabel, fileName);
+                            displayMolecule(loaded.molecule, sourceLabel, fileName, loader);
                             setLoading(false, "");
                         }
                     });
@@ -396,7 +408,8 @@ public final class MainActivity extends Activity implements View.OnClickListener
                             setLoading(false, "");
                             Toast.makeText(MainActivity.this, ex.getMessage(), Toast.LENGTH_LONG).show();
                             if (statusView != null) {
-                                statusView.setText("Load failed\n" + ex.getMessage());
+                                statusView.setText("Load failed\n" + ex.getMessage()
+                                        + "\nUse the source-text button to inspect this file.");
                             }
                         }
                     });
@@ -418,6 +431,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
         if (resetButton != null) {
             resetButton.setEnabled(!loading && current != null);
+        }
+        if (sourceButton != null) {
+            sourceButton.setEnabled(!loading && hasSourceReference());
         }
         if (frameSeek != null) {
             frameSeek.setEnabled(!loading && current != null && (current.hasVibrations()
@@ -454,13 +470,15 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
     }
 
-    private void displayMolecule(Molecule molecule, String sourceLabel, String fileName) {
+    private void displayMolecule(Molecule molecule, String sourceLabel, String fileName, MoleculeLoader loader) {
         current = molecule;
         currentSourceLabel = sourceLabel;
         currentFileName = fileName == null ? "" : fileName;
+        currentSourceUri = loader instanceof UriLoader ? ((UriLoader) loader).uri : null;
+        currentAssetPath = loader instanceof AssetLoader ? ((AssetLoader) loader).assetPath : "";
+        currentSourceTitle = titleText();
         vibrationIndex = 0;
         vibrationTick = 0;
-        previewTicksRemaining = 0;
         moleculeView.setMolecule(molecule);
         titleView.setText(titleText());
         updateStatus();
@@ -471,7 +489,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
             frameSeek.setMax(Math.max(0, molecule.frameCount() - 1));
             frameSeek.setEnabled(molecule.frameCount() > 1);
         }
-        setFrame(0, false);
+        setFrame(0);
         updateNavigationButtons();
         updatePlaybackButton();
     }
@@ -486,10 +504,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
     }
 
     private void setFrame(int frame) {
-        setFrame(frame, true);
-    }
-
-    private void setFrame(int frame, boolean previewVibration) {
         if (current == null) {
             return;
         }
@@ -503,9 +517,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
             frameSeek.setProgress(safe);
             frameView.setText(vibrationFrameText(safe));
             updateStatus();
-            if (previewVibration) {
-                startVibrationPreview();
-            }
             updateNavigationButtons();
             updatePlaybackButton();
             return;
@@ -534,7 +545,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
         updatePlaybackButton();
         handler.removeCallbacks(playTick);
         if (playing) {
-            stopVibrationPreview();
             handler.post(playTick);
         }
     }
@@ -543,26 +553,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
         playing = false;
         handler.removeCallbacks(playTick);
         updatePlaybackButton();
-    }
-
-    private void startVibrationPreview() {
-        handler.removeCallbacks(vibrationPreviewTick);
-        previewTicksRemaining = 0;
-        if (playing || current == null || !current.hasVibrations()) {
-            return;
-        }
-        Molecule.VibrationMode vibration = current.vibrationAt(vibrationIndex);
-        if (vibration == null || !vibration.hasDisplacement()) {
-            return;
-        }
-        previewTicksRemaining = 16;
-        vibrationTick = 0;
-        handler.post(vibrationPreviewTick);
-    }
-
-    private void stopVibrationPreview() {
-        previewTicksRemaining = 0;
-        handler.removeCallbacks(vibrationPreviewTick);
     }
 
     private void updatePlaybackButton() {
@@ -661,6 +651,33 @@ public final class MainActivity extends Activity implements View.OnClickListener
         intent.putExtra(DetailsActivity.EXTRA_TITLE, titleText());
         intent.putExtra(DetailsActivity.EXTRA_SUMMARY, detailText());
         startActivity(intent);
+    }
+
+    private void showSourcePage() {
+        if (!hasSourceReference()) {
+            Toast.makeText(this, "No source text loaded", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (currentSourceUri != null) {
+            SourceTextStore.setUri(sourceTitleText(), currentSourceUri.toString());
+        } else {
+            SourceTextStore.setAsset(sourceTitleText(), currentAssetPath);
+        }
+        startActivity(new Intent(this, SourceActivity.class));
+    }
+
+    private boolean hasSourceReference() {
+        return currentSourceUri != null || !currentAssetPath.isEmpty();
+    }
+
+    private String sourceTitleText() {
+        if (current != null) {
+            return titleText();
+        }
+        if (currentSourceTitle == null || currentSourceTitle.isEmpty()) {
+            return currentFileName == null || currentFileName.isEmpty() ? "Source" : currentFileName;
+        }
+        return currentSourceTitle;
     }
 
     private String detailText() {
@@ -777,6 +794,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         updateThemeButton();
         updateModeButton();
         updatePlaybackButton();
+        if (sourceButton != null) {
+            sourceButton.setEnabled(hasSourceReference());
+        }
         styleSeekBar(frameSeek);
         configureSystemBars();
         if (moleculeView != null) {
@@ -817,7 +837,15 @@ public final class MainActivity extends Activity implements View.OnClickListener
     }
 
     private interface MoleculeLoader {
-        Molecule load() throws IOException;
+        LoadedMolecule load() throws IOException;
+    }
+
+    private static final class LoadedMolecule {
+        final Molecule molecule;
+
+        LoadedMolecule(Molecule molecule) {
+            this.molecule = molecule;
+        }
     }
 
     private final class UriLoader implements MoleculeLoader {
@@ -830,9 +858,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
 
         @Override
-        public Molecule load() throws IOException {
+        public LoadedMolecule load() throws IOException {
             String text = readUri(uri);
-            return parseMoleculeFile(text, name);
+            return new LoadedMolecule(parseMoleculeFile(text, name));
         }
     }
 
@@ -844,10 +872,10 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
 
         @Override
-        public Molecule load() throws IOException {
+        public LoadedMolecule load() throws IOException {
             try (InputStream input = getAssets().open(assetPath)) {
                 String text = readAll(input);
-                return parseXyzFile(text, assetPath);
+                return new LoadedMolecule(parseXyzFile(text, assetPath));
             }
         }
     }
@@ -857,6 +885,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         byte[] buffer = new byte[8192];
         int read;
         while ((read = input.read(buffer)) != -1) {
+            if (output.size() + read > MAX_PARSE_BYTES) {
+                throw new IOException("File is too large to parse in the viewer. Use the source-text page to inspect it.");
+            }
             output.write(buffer, 0, read);
         }
         return output.toString(StandardCharsets.UTF_8.name());
@@ -927,16 +958,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
         view.setTextColor(color);
         view.setGravity(Gravity.CENTER_VERTICAL);
         return view;
-    }
-
-    private LinearLayout.LayoutParams buttonLayout(int width) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(width, dp(36));
-        params.setMarginEnd(dp(6));
-        return params;
-    }
-
-    private LinearLayout.LayoutParams buttonLayoutLast(int width) {
-        return new LinearLayout.LayoutParams(width, dp(36));
     }
 
     private LinearLayout.LayoutParams railLayout() {
@@ -1085,32 +1106,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
             if (next >= current.frameCount()) {
                 next = 0;
             }
-            setFrame(next, false);
+            setFrame(next);
             handler.postDelayed(this, 180);
         }
     }
 
-    private final class VibrationPreviewTick implements Runnable {
-        @Override
-        public void run() {
-            if (previewTicksRemaining <= 0 || playing || current == null || !current.hasVibrations()) {
-                previewTicksRemaining = 0;
-                return;
-            }
-            Molecule.VibrationMode vibration = current.vibrationAt(vibrationIndex);
-            if (vibration == null || !vibration.hasDisplacement()) {
-                previewTicksRemaining = 0;
-                return;
-            }
-            int step = 16 - previewTicksRemaining;
-            float phase = (float) (Math.PI * 0.5 + step * Math.PI * 0.32);
-            moleculeView.setVibrationPhase(phase);
-            previewTicksRemaining--;
-            if (previewTicksRemaining > 0) {
-                handler.postDelayed(this, 45);
-            } else {
-                moleculeView.setVibrationPhase((float) (Math.PI * 0.5));
-            }
-        }
-    }
 }

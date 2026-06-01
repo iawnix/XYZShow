@@ -14,6 +14,7 @@ XYZShow is a small native Android molecular viewer for local XYZ files and Gauss
 - Toggle black/white backgrounds from the top icon bar.
 - Reset the camera to a fit-to-screen view when the molecule is dragged out of view.
 - For Gaussian frequency jobs, inspect modes with the bottom playback bar: previous mode, play/pause, next mode, and the mode seek bar.
+- View the loaded source file in a read-only line-numbered text page from the top icon bar.
 - Use the top info button to open a full details page for XYZ/Gaussian metadata and the selected vibration.
 
 ## Gaussian Output Support
@@ -52,19 +53,19 @@ The release helper creates local-only signing material under `local-signing/` on
 The latest verified release APK from this snapshot is included at:
 
 ```text
-releases/XYZShow-release-0.4.1.apk
+releases/XYZShow-release-0.4.3.apk
 ```
 
 Release metadata from the local build:
 
 - package: `io.iaw.xyzshow`
-- version: `0.4.1` (`versionCode 16`)
-- size: `95,600` bytes
-- SHA-256: `d0dc69b03e0cf76f370d4c0ab66ad92cd453a0d9d14521840cecc6ccb975afe1`
+- version: `0.4.3` (`versionCode 18`)
+- size: `108,168` bytes
+- SHA-256: `94a0acbfbec5bb4f6eb4ffa958e25beca42ddfb8af41f06a1cc6cd2226696ee3`
 - signing: release-signed, `apksigner verify` passed
 
 ## Scope
 
-Current version: `0.4.1`.
+Current version: `0.4.3`.
 
 PDB, mmCIF, checkpoint files, formatted checkpoint files, cube/volume data, cloud sync, and Play Store release packaging are not included in this snapshot.

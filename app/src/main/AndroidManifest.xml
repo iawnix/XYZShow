@@ -20,5 +20,9 @@
             android:name=".DetailsActivity"
             android:exported="false"
             android:screenOrientation="unspecified" />
+        <activity
+            android:name=".SourceActivity"
+            android:exported="false"
+            android:screenOrientation="unspecified" />
     </application>
 </manifest>

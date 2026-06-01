@@ -29,8 +29,11 @@ import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public final class SourceActivity extends Activity {
     static final String EXTRA_TITLE = "io.iaw.molview.extra.SOURCE_TITLE";
@@ -58,12 +61,20 @@ public final class SourceActivity extends Activity {
     private ProgressBar loadingView;
     private ScrollView vertical;
     private final ExecutorService sourceExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService indexExecutor = Executors.newSingleThreadExecutor();
     private final List<String> currentPageLines = new ArrayList<>();
+    private final Object pageIndexLock = new Object();
+    private final AtomicInteger renderGeneration = new AtomicInteger();
+    private FutureTask<PageIndex> pageIndexTask;
+    private boolean pageIndexStarted;
     private String sourceTitle = "";
     private String sourceLocation = "";
     private int sourceKind = SourceTextStore.KIND_NONE;
     private int totalLines = 1;
     private int page;
+    private boolean pageCountKnown = true;
+    private boolean pageHasMore;
+    private boolean destroyed;
     private boolean light;
 
     @Override
@@ -88,7 +99,10 @@ public final class SourceActivity extends Activity {
 
     @Override
     protected void onDestroy() {
+        destroyed = true;
+        renderGeneration.incrementAndGet();
         sourceExecutor.shutdownNow();
+        indexExecutor.shutdownNow();
         super.onDestroy();
     }
 
@@ -309,15 +323,27 @@ public final class SourceActivity extends Activity {
 
     private void renderPage(int targetPage) {
         setLoading(true);
+        final int generation = renderGeneration.incrementAndGet();
         final int requestedPage = Math.max(0, targetPage);
+        if (requestedPage == 0) {
+            ensurePageIndexStarted();
+        }
         sourceExecutor.execute(new Runnable() {
             @Override
             public void run() {
                 try {
-                    final PageData data = readPage(requestedPage);
+                    final PageData data;
+                    if (requestedPage == 0 && !isPageIndexReady()) {
+                        data = readFirstPage();
+                    } else {
+                        data = readPageFromIndex(pageIndex(), requestedPage);
+                    }
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            if (generation != renderGeneration.get()) {
+                                return;
+                            }
                             applyPage(data);
                             setLoading(false);
                         }
@@ -326,6 +352,9 @@ public final class SourceActivity extends Activity {
                     runOnUiThread(new Runnable() {
                         @Override
                         public void run() {
+                            if (generation != renderGeneration.get()) {
+                                return;
+                            }
                             setLoading(false);
                             Toast.makeText(SourceActivity.this, ex.getMessage(), Toast.LENGTH_LONG).show();
                         }
@@ -337,7 +366,13 @@ public final class SourceActivity extends Activity {
 
     private void applyPage(PageData data) {
         page = data.page;
-        totalLines = data.totalLines;
+        pageCountKnown = data.totalKnown;
+        pageHasMore = data.hasMore;
+        if (data.totalKnown) {
+            totalLines = data.totalLines;
+        } else {
+            totalLines = Math.max(totalLines, data.startLine + data.lines.size());
+        }
         currentPageLines.clear();
         currentPageLines.addAll(data.lines);
         StringBuilder gutter = new StringBuilder();
@@ -352,14 +387,7 @@ public final class SourceActivity extends Activity {
         }
         gutterView.setText(gutter.toString());
         sourceView.setText(source.toString());
-        pagerView.setText(String.format(Locale.US,
-                "Page %d/%d",
-                page + 1,
-                pageCount()));
-        firstButton.setEnabled(page > 0);
-        prevButton.setEnabled(page > 0);
-        nextButton.setEnabled(page + 1 < pageCount());
-        lastButton.setEnabled(page + 1 < pageCount());
+        updatePagerControls();
         vertical.post(new Runnable() {
             @Override
             public void run() {
@@ -368,36 +396,181 @@ public final class SourceActivity extends Activity {
         });
     }
 
+    private void updatePagerControls() {
+        if (pagerView == null) {
+            return;
+        }
+        pagerView.setText(String.format(Locale.US,
+                "Page %d/%s",
+                page + 1,
+                pageCountKnown ? String.valueOf(pageCount()) : "..."));
+        firstButton.setEnabled(page > 0);
+        prevButton.setEnabled(page > 0);
+        nextButton.setEnabled(pageCountKnown ? page + 1 < pageCount() : pageHasMore);
+        lastButton.setEnabled(pageCountKnown && page + 1 < pageCount());
+    }
+
     private int pageCount() {
         return Math.max(1, (totalLines + PAGE_LINES - 1) / PAGE_LINES);
     }
 
-    private PageData readPage(int requestedPage) throws IOException {
+    private PageData readFirstPage() throws IOException {
         List<String> pageLines = new ArrayList<>();
-        int startLineIndex = requestedPage * PAGE_LINES;
-        int total = 0;
-        try (BufferedReader reader = openReader()) {
+        boolean hasMore;
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(openInput(), StandardCharsets.UTF_8), 8192)) {
             String line;
-            while ((line = reader.readLine()) != null) {
-                if (total >= startLineIndex && pageLines.size() < PAGE_LINES) {
-                    pageLines.add(line);
-                }
-                total++;
+            while (pageLines.size() < PAGE_LINES && (line = reader.readLine()) != null) {
+                pageLines.add(line);
             }
+            hasMore = pageLines.size() == PAGE_LINES && reader.readLine() != null;
         }
-        if (total == 0) {
-            total = 1;
+        if (pageLines.isEmpty()) {
             pageLines.add("");
+            return new PageData(0, 1, 1, pageLines, true, false);
         }
-        int pages = Math.max(1, (total + PAGE_LINES - 1) / PAGE_LINES);
-        int safePage = Math.max(0, Math.min(requestedPage, pages - 1));
-        if (safePage != requestedPage) {
-            return readPage(safePage);
-        }
-        return new PageData(safePage, startLineIndex + 1, total, pageLines);
+        int visibleTotal = hasMore ? PAGE_LINES + 1 : pageLines.size();
+        return new PageData(0, 1, visibleTotal, pageLines, !hasMore, hasMore);
     }
 
-    private BufferedReader openReader() throws IOException {
+    private PageData readPageFromIndex(PageIndex index, int requestedPage) throws IOException {
+        List<String> pageLines = new ArrayList<>();
+        int pages = Math.max(1, index.pageCount());
+        int safePage = Math.max(0, Math.min(requestedPage, pages - 1));
+        int startLineIndex = safePage * PAGE_LINES;
+        if (index.totalLines == 0) {
+            pageLines.add("");
+            return new PageData(0, 1, 1, pageLines, true, false);
+        }
+        try (InputStream input = openInput()) {
+            skipFully(input, index.pageOffset(safePage));
+            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8), 8192);
+            String line;
+            while (pageLines.size() < PAGE_LINES && (line = reader.readLine()) != null) {
+                pageLines.add(line);
+            }
+        }
+        return new PageData(safePage,
+                startLineIndex + 1,
+                Math.max(1, index.totalLines),
+                pageLines,
+                true,
+                safePage + 1 < pages);
+    }
+
+    private PageIndex pageIndex() throws IOException {
+        ensurePageIndexStarted();
+        FutureTask<PageIndex> task = ensurePageIndexTask();
+        try {
+            return task.get();
+        } catch (InterruptedException ex) {
+            Thread.currentThread().interrupt();
+            throw new IOException("Interrupted while indexing source text", ex);
+        } catch (java.util.concurrent.ExecutionException ex) {
+            Throwable cause = ex.getCause();
+            if (cause instanceof IOException) {
+                throw (IOException) cause;
+            }
+            throw new IOException("Cannot index source text", cause);
+        }
+    }
+
+    private boolean isPageIndexReady() {
+        synchronized (pageIndexLock) {
+            return pageIndexTask != null && pageIndexTask.isDone();
+        }
+    }
+
+    private void ensurePageIndexStarted() {
+        final FutureTask<PageIndex> task;
+        synchronized (pageIndexLock) {
+            task = ensurePageIndexTaskLocked();
+            if (pageIndexStarted) {
+                return;
+            }
+            pageIndexStarted = true;
+        }
+        indexExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                task.run();
+                try {
+                    final PageIndex index = task.get();
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (!destroyed) {
+                                applyPageIndex(index);
+                            }
+                        }
+                    });
+                } catch (InterruptedException ex) {
+                    Thread.currentThread().interrupt();
+                } catch (java.util.concurrent.ExecutionException ignored) {
+                }
+            }
+        });
+    }
+
+    private FutureTask<PageIndex> ensurePageIndexTask() {
+        synchronized (pageIndexLock) {
+            return ensurePageIndexTaskLocked();
+        }
+    }
+
+    private FutureTask<PageIndex> ensurePageIndexTaskLocked() {
+        if (pageIndexTask == null) {
+            pageIndexTask = new FutureTask<>(new Callable<PageIndex>() {
+                @Override
+                public PageIndex call() throws IOException {
+                    return buildPageIndex();
+                }
+            });
+        }
+        return pageIndexTask;
+    }
+
+    private void applyPageIndex(PageIndex index) {
+        totalLines = Math.max(1, index.totalLines);
+        pageCountKnown = true;
+        pageHasMore = page + 1 < pageCount();
+        updatePagerControls();
+    }
+
+    private PageIndex buildPageIndex() throws IOException {
+        List<Long> pageOffsets = new ArrayList<>();
+        pageOffsets.add(0L);
+        int newlineCount = 0;
+        long position = 0L;
+        boolean sawAnyByte = false;
+        boolean endedWithNewline = false;
+        byte[] buffer = new byte[8192];
+        try (InputStream input = openInput()) {
+            int read;
+            while ((read = input.read(buffer)) != -1) {
+                sawAnyByte = true;
+                for (int i = 0; i < read; i++) {
+                    position++;
+                    if (buffer[i] == '\n') {
+                        newlineCount++;
+                        endedWithNewline = true;
+                        if (newlineCount % PAGE_LINES == 0) {
+                            pageOffsets.add(position);
+                        }
+                    } else {
+                        endedWithNewline = false;
+                    }
+                }
+            }
+        }
+        int total = sawAnyByte ? newlineCount + (endedWithNewline ? 0 : 1) : 0;
+        int pages = Math.max(1, (Math.max(1, total) + PAGE_LINES - 1) / PAGE_LINES);
+        while (pageOffsets.size() > pages) {
+            pageOffsets.remove(pageOffsets.size() - 1);
+        }
+        return new PageIndex(total, pageOffsets);
+    }
+
+    private InputStream openInput() throws IOException {
         InputStream input;
         if (sourceKind == SourceTextStore.KIND_URI) {
             input = getContentResolver().openInputStream(Uri.parse(sourceLocation));
@@ -409,15 +582,34 @@ public final class SourceActivity extends Activity {
         if (input == null) {
             throw new IOException("Cannot open source text");
         }
-        return new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8), 8192);
+        return input;
+    }
+
+    private void skipFully(InputStream input, long bytes) throws IOException {
+        long remaining = bytes;
+        while (remaining > 0L) {
+            long skipped = input.skip(remaining);
+            if (skipped > 0L) {
+                remaining -= skipped;
+                continue;
+            }
+            if (input.read() == -1) {
+                throw new IOException("Cannot seek source text");
+            }
+            remaining--;
+        }
     }
 
     private void setLoading(boolean loading) {
         loadingView.setVisibility(loading ? View.VISIBLE : View.GONE);
-        firstButton.setEnabled(!loading && page > 0);
-        prevButton.setEnabled(!loading && page > 0);
-        nextButton.setEnabled(!loading && page + 1 < pageCount());
-        lastButton.setEnabled(!loading && page + 1 < pageCount());
+        if (loading) {
+            firstButton.setEnabled(false);
+            prevButton.setEnabled(false);
+            nextButton.setEnabled(false);
+            lastButton.setEnabled(false);
+        } else {
+            updatePagerControls();
+        }
     }
 
     private void applyInsets() {
@@ -477,12 +669,37 @@ public final class SourceActivity extends Activity {
         final int startLine;
         final int totalLines;
         final List<String> lines;
+        final boolean totalKnown;
+        final boolean hasMore;
 
-        PageData(int page, int startLine, int totalLines, List<String> lines) {
+        PageData(int page, int startLine, int totalLines, List<String> lines, boolean totalKnown, boolean hasMore) {
             this.page = page;
             this.startLine = startLine;
             this.totalLines = totalLines;
             this.lines = lines;
+            this.totalKnown = totalKnown;
+            this.hasMore = hasMore;
+        }
+    }
+
+    private static final class PageIndex {
+        final int totalLines;
+        final List<Long> pageOffsets;
+
+        PageIndex(int totalLines, List<Long> pageOffsets) {
+            this.totalLines = totalLines;
+            this.pageOffsets = pageOffsets;
+        }
+
+        int pageCount() {
+            return Math.max(1, (Math.max(1, totalLines) + PAGE_LINES - 1) / PAGE_LINES);
+        }
+
+        long pageOffset(int page) {
+            if (page < 0 || page >= pageOffsets.size()) {
+                return 0L;
+            }
+            return pageOffsets.get(page);
         }
     }
 }

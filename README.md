@@ -53,19 +53,19 @@ The release helper creates local-only signing material under `local-signing/` on
 The latest verified release APK from this snapshot is included at:
 
 ```text
-releases/XYZShow-release-0.4.5.apk
+releases/XYZShow-release-0.4.6.apk
 ```
 
 Release metadata from the local build:
 
 - package: `io.iaw.xyzshow`
-- version: `0.4.5` (`versionCode 20`)
-- size: `112,320` bytes
-- SHA-256: `c139b2048c145bd7e52195f31bec491c7f24152676ba04d9569a15afde7ee6e9`
+- version: `0.4.6` (`versionCode 21`)
+- size: `120,512` bytes
+- SHA-256: `0f35cde8bc491b529049819191d26d84194aa612174165683c7b79fc6a2777e9`
 - signing: release-signed, `apksigner verify` passed
 
 ## Scope
 
-Current version: `0.4.5`.
+Current version: `0.4.6`.
 
 PDB, mmCIF, checkpoint files, formatted checkpoint files, cube/volume data, cloud sync, and Play Store release packaging are not included in this snapshot.

@@ -20,6 +20,12 @@ final class MoleculeView extends GLSurfaceView {
     private static final int MODE_STICKS = 1;
     static final int BACKGROUND_DARK = 0;
     static final int BACKGROUND_LIGHT = 1;
+    private static final float DEFAULT_YAW = -0.55f;
+    private static final float DEFAULT_PITCH = 0.45f;
+    private static final float MIN_PITCH = -1.45f;
+    private static final float MAX_PITCH = 1.45f;
+    private static final float MIN_ZOOM = 0.12f;
+    private static final float MAX_ZOOM = 18f;
 
     private final MoleculeRenderer renderer;
     private Molecule molecule;
@@ -27,8 +33,8 @@ final class MoleculeView extends GLSurfaceView {
     private int vibrationIndex;
     private float vibrationPhase;
     private int mode = MODE_SPACE;
-    private float yaw = -0.55f;
-    private float pitch = 0.45f;
+    private float yaw = DEFAULT_YAW;
+    private float pitch = DEFAULT_PITCH;
     private float zoom = 1f;
     private float panX = 0f;
     private float panY = 0f;
@@ -55,8 +61,8 @@ final class MoleculeView extends GLSurfaceView {
         this.frameIndex = 0;
         this.vibrationIndex = 0;
         this.vibrationPhase = 0f;
-        this.yaw = -0.55f;
-        this.pitch = 0.45f;
+        this.yaw = DEFAULT_YAW;
+        this.pitch = DEFAULT_PITCH;
         this.fitZoom = fitZoomFor(this.molecule);
         this.zoom = fitZoom;
         this.panX = 0f;
@@ -117,8 +123,12 @@ final class MoleculeView extends GLSurfaceView {
         return frameIndex;
     }
 
-    String cycleMode() {
-        mode = mode == MODE_SPACE ? MODE_STICKS : MODE_SPACE;
+    int getDisplayMode() {
+        return mode;
+    }
+
+    void setDisplayMode(final int displayMode) {
+        mode = displayMode == MODE_STICKS ? MODE_STICKS : MODE_SPACE;
         queueEvent(new Runnable() {
             @Override
             public void run() {
@@ -126,6 +136,39 @@ final class MoleculeView extends GLSurfaceView {
             }
         });
         requestRender();
+    }
+
+    float getYaw() {
+        return yaw;
+    }
+
+    float getPitch() {
+        return pitch;
+    }
+
+    float getZoom() {
+        return zoom;
+    }
+
+    float getPanX() {
+        return panX;
+    }
+
+    float getPanY() {
+        return panY;
+    }
+
+    void restoreViewState(float yaw, float pitch, float zoom, float panX, float panY) {
+        this.yaw = yaw;
+        this.pitch = clamp(pitch, MIN_PITCH, MAX_PITCH);
+        this.zoom = clamp(zoom, MIN_ZOOM, MAX_ZOOM);
+        this.panX = panX;
+        this.panY = panY;
+        queueCamera();
+    }
+
+    String cycleMode() {
+        setDisplayMode(mode == MODE_SPACE ? MODE_STICKS : MODE_SPACE);
         return modeName();
     }
 
@@ -137,8 +180,8 @@ final class MoleculeView extends GLSurfaceView {
     }
 
     void resetView() {
-        yaw = -0.55f;
-        pitch = 0.45f;
+        yaw = DEFAULT_YAW;
+        pitch = DEFAULT_PITCH;
         fitZoom = fitZoomFor(molecule);
         zoom = fitZoom;
         panX = 0f;
@@ -161,7 +204,9 @@ final class MoleculeView extends GLSurfaceView {
         if (molecule == null) {
             return true;
         }
-        getParent().requestDisallowInterceptTouchEvent(true);
+        if (getParent() != null) {
+            getParent().requestDisallowInterceptTouchEvent(true);
+        }
         int action = event.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             lastX = event.getX();
@@ -179,7 +224,7 @@ final class MoleculeView extends GLSurfaceView {
                 float focusX = focusX(event);
                 float focusY = focusY(event);
                 if (lastSpan > 0f) {
-                    zoom = clamp(zoom * (span / lastSpan), 0.12f, 18f);
+                    zoom = clamp(zoom * (span / lastSpan), MIN_ZOOM, MAX_ZOOM);
                     float unit = Math.max(1f, Math.min(getWidth(), getHeight()));
                     panX += 2f * (focusX - lastFocusX) / unit;
                     panY -= 2f * (focusY - lastFocusY) / unit;
@@ -191,7 +236,7 @@ final class MoleculeView extends GLSurfaceView {
                 float x = event.getX();
                 float y = event.getY();
                 yaw += (x - lastX) * 0.012f;
-                pitch += (y - lastY) * 0.012f;
+                pitch = clamp(pitch + (y - lastY) * 0.012f, MIN_PITCH, MAX_PITCH);
                 lastX = x;
                 lastY = y;
                 lastSpan = 0f;
@@ -201,12 +246,19 @@ final class MoleculeView extends GLSurfaceView {
         }
         if (action == MotionEvent.ACTION_POINTER_UP) {
             lastSpan = 0f;
-            if (event.getPointerCount() - 1 >= 2) {
-                rememberPinch(event);
+            int lifted = event.getActionIndex();
+            int remainingCount = remainingPointerCount(event, lifted);
+            if (remainingCount >= 2) {
+                rememberPinch(event, lifted);
+            } else if (remainingCount == 1) {
+                int remaining = firstPointerIndex(event, lifted);
+                if (remaining >= 0) {
+                    lastX = event.getX(remaining);
+                    lastY = event.getY(remaining);
+                }
             } else {
-                int remaining = event.getActionIndex() == 0 ? 1 : 0;
-                lastX = event.getX(remaining);
-                lastY = event.getY(remaining);
+                lastX = 0f;
+                lastY = 0f;
             }
             return true;
         }
@@ -228,34 +280,93 @@ final class MoleculeView extends GLSurfaceView {
     }
 
     private void rememberPinch(MotionEvent event) {
-        lastSpan = span(event);
-        lastFocusX = focusX(event);
-        lastFocusY = focusY(event);
+        rememberPinch(event, -1);
+    }
+
+    private void rememberPinch(MotionEvent event, int skipPointerIndex) {
+        lastSpan = span(event, skipPointerIndex);
+        lastFocusX = focusX(event, skipPointerIndex);
+        lastFocusY = focusY(event, skipPointerIndex);
     }
 
     private float span(MotionEvent event) {
+        return span(event, -1);
+    }
+
+    private float span(MotionEvent event, int skipPointerIndex) {
         if (event.getPointerCount() < 2) {
             return 0f;
         }
-        float dx = event.getX(1) - event.getX(0);
-        float dy = event.getY(1) - event.getY(0);
+        int first = firstPointerIndex(event, skipPointerIndex);
+        int second = secondPointerIndex(event, skipPointerIndex);
+        if (first < 0 || second < 0) {
+            return 0f;
+        }
+        float dx = event.getX(second) - event.getX(first);
+        float dy = event.getY(second) - event.getY(first);
         return (float) Math.sqrt(dx * dx + dy * dy);
     }
 
     private float focusX(MotionEvent event) {
+        return focusX(event, -1);
+    }
+
+    private float focusX(MotionEvent event, int skipPointerIndex) {
         float sum = 0f;
+        int count = 0;
         for (int i = 0; i < event.getPointerCount(); i++) {
+            if (i == skipPointerIndex) {
+                continue;
+            }
             sum += event.getX(i);
+            count++;
         }
-        return sum / event.getPointerCount();
+        return count == 0 ? 0f : sum / count;
     }
 
     private float focusY(MotionEvent event) {
+        return focusY(event, -1);
+    }
+
+    private float focusY(MotionEvent event, int skipPointerIndex) {
         float sum = 0f;
+        int count = 0;
         for (int i = 0; i < event.getPointerCount(); i++) {
+            if (i == skipPointerIndex) {
+                continue;
+            }
             sum += event.getY(i);
+            count++;
         }
-        return sum / event.getPointerCount();
+        return count == 0 ? 0f : sum / count;
+    }
+
+    private int remainingPointerCount(MotionEvent event, int skipPointerIndex) {
+        return event.getPointerCount() - (skipPointerIndex >= 0 ? 1 : 0);
+    }
+
+    private int firstPointerIndex(MotionEvent event, int skipPointerIndex) {
+        for (int i = 0; i < event.getPointerCount(); i++) {
+            if (i != skipPointerIndex) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int secondPointerIndex(MotionEvent event, int skipPointerIndex) {
+        boolean foundFirst = false;
+        for (int i = 0; i < event.getPointerCount(); i++) {
+            if (i == skipPointerIndex) {
+                continue;
+            }
+            if (!foundFirst) {
+                foundFirst = true;
+                continue;
+            }
+            return i;
+        }
+        return -1;
     }
 
     private float clamp(float value, float min, float max) {

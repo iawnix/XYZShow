@@ -71,6 +71,14 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private static final String STATE_SOURCE_LABEL = "source_label";
     private static final String STATE_FILE_NAME = "file_name";
     private static final String STATE_SOURCE_TITLE = "source_title";
+    private static final String STATE_FRAME_INDEX = "frame_index";
+    private static final String STATE_VIBRATION_INDEX = "vibration_index";
+    private static final String STATE_DISPLAY_MODE = "display_mode";
+    private static final String STATE_YAW = "yaw";
+    private static final String STATE_PITCH = "pitch";
+    private static final String STATE_ZOOM = "zoom";
+    private static final String STATE_PAN_X = "pan_x";
+    private static final String STATE_PAN_Y = "pan_y";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService loadExecutor = Executors.newSingleThreadExecutor();
@@ -103,6 +111,15 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private boolean playing;
     private boolean lightBackground;
     private boolean loading;
+    private boolean pendingRestoreView;
+    private int pendingFrameIndex;
+    private int pendingVibrationIndex;
+    private int pendingDisplayMode;
+    private float pendingYaw;
+    private float pendingPitch;
+    private float pendingZoom;
+    private float pendingPanX;
+    private float pendingPanY;
     private int vibrationIndex;
     private int vibrationTick;
 
@@ -130,6 +147,14 @@ public final class MainActivity extends Activity implements View.OnClickListener
         outState.putString(STATE_SOURCE_LABEL, currentSourceLabel);
         outState.putString(STATE_FILE_NAME, currentFileName);
         outState.putString(STATE_SOURCE_TITLE, currentSourceTitle);
+        outState.putInt(STATE_FRAME_INDEX, moleculeView == null ? 0 : moleculeView.getFrameIndex());
+        outState.putInt(STATE_VIBRATION_INDEX, vibrationIndex);
+        outState.putInt(STATE_DISPLAY_MODE, moleculeView == null ? 0 : moleculeView.getDisplayMode());
+        outState.putFloat(STATE_YAW, moleculeView == null ? 0f : moleculeView.getYaw());
+        outState.putFloat(STATE_PITCH, moleculeView == null ? 0f : moleculeView.getPitch());
+        outState.putFloat(STATE_ZOOM, moleculeView == null ? 1f : moleculeView.getZoom());
+        outState.putFloat(STATE_PAN_X, moleculeView == null ? 0f : moleculeView.getPanX());
+        outState.putFloat(STATE_PAN_Y, moleculeView == null ? 0f : moleculeView.getPanY());
     }
 
     @Override
@@ -398,6 +423,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentSourceLabel = "File";
         currentFileName = name;
         currentSourceTitle = "File  -  " + name;
+        pendingRestoreView = false;
         loadMoleculeAsync(new UriLoader(uri, name), "File", name);
     }
 
@@ -408,6 +434,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentSourceLabel = "Default";
         currentFileName = DEFAULT_ASSET;
         currentSourceTitle = "Default  -  " + DEFAULT_ASSET;
+        pendingRestoreView = false;
         loadMoleculeAsync(new AssetLoader(DEFAULT_ASSET), "Default", DEFAULT_ASSET);
     }
 
@@ -424,6 +451,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
             if (uriText == null || uriText.isEmpty()) {
                 return false;
             }
+            capturePendingRestore(state);
             Uri uri = Uri.parse(uriText);
             currentSourceUri = uri;
             currentAssetPath = "";
@@ -437,6 +465,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
             if (assetPath == null || assetPath.isEmpty()) {
                 return false;
             }
+            capturePendingRestore(state);
             currentSourceUri = null;
             currentAssetPath = assetPath;
             currentSourceLabel = sourceLabel.isEmpty() ? "Default" : sourceLabel;
@@ -445,6 +474,18 @@ public final class MainActivity extends Activity implements View.OnClickListener
             return true;
         }
         return false;
+    }
+
+    private void capturePendingRestore(Bundle state) {
+        pendingRestoreView = true;
+        pendingFrameIndex = state.getInt(STATE_FRAME_INDEX, 0);
+        pendingVibrationIndex = state.getInt(STATE_VIBRATION_INDEX, 0);
+        pendingDisplayMode = state.getInt(STATE_DISPLAY_MODE, 0);
+        pendingYaw = state.getFloat(STATE_YAW, -0.55f);
+        pendingPitch = state.getFloat(STATE_PITCH, 0.45f);
+        pendingZoom = state.getFloat(STATE_ZOOM, 1f);
+        pendingPanX = state.getFloat(STATE_PAN_X, 0f);
+        pendingPanY = state.getFloat(STATE_PAN_Y, 0f);
     }
 
     private void loadMoleculeAsync(final MoleculeLoader loader, final String sourceLabel, final String fileName) {
@@ -473,6 +514,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
                             if (generation != loadGeneration.get()) {
                                 return;
                             }
+                            pendingRestoreView = false;
                             setLoading(false, "");
                             Toast.makeText(MainActivity.this, ex.getMessage(), Toast.LENGTH_LONG).show();
                             if (statusView != null) {
@@ -545,9 +587,14 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentSourceUri = loader instanceof UriLoader ? ((UriLoader) loader).uri : null;
         currentAssetPath = loader instanceof AssetLoader ? ((AssetLoader) loader).assetPath : "";
         currentSourceTitle = titleText();
-        vibrationIndex = 0;
+        int restoreVibration = pendingRestoreView ? pendingVibrationIndex : 0;
+        int restoreFrame = pendingRestoreView ? pendingFrameIndex : 0;
         vibrationTick = 0;
         moleculeView.setMolecule(molecule);
+        if (pendingRestoreView) {
+            moleculeView.setDisplayMode(pendingDisplayMode);
+            updateModeButton();
+        }
         titleView.setText(titleText());
         updateStatus();
         if (molecule.hasVibrations()) {
@@ -557,7 +604,11 @@ public final class MainActivity extends Activity implements View.OnClickListener
             frameSeek.setMax(Math.max(0, molecule.frameCount() - 1));
             frameSeek.setEnabled(molecule.frameCount() > 1);
         }
-        setFrame(0);
+        setFrame(molecule.hasVibrations() ? restoreVibration : restoreFrame);
+        if (pendingRestoreView) {
+            moleculeView.restoreViewState(pendingYaw, pendingPitch, pendingZoom, pendingPanX, pendingPanY);
+            pendingRestoreView = false;
+        }
         updateNavigationButtons();
         updatePlaybackButton();
     }
@@ -1164,17 +1215,25 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private final class PlaybackTick implements Runnable {
         @Override
         public void run() {
-            if (!playing || current == null || current.frameCount() <= 1) {
-                if (current != null && current.hasVibrations()) {
-                    Molecule.VibrationMode vibration = current.vibrationAt(vibrationIndex);
-                    if (playing && vibration != null && vibration.hasDisplacement()) {
-                        vibrationTick = (vibrationTick + 1) % 48;
-                        float phase = (float) (vibrationTick * Math.PI * 2.0 / 48.0);
-                        moleculeView.setVibrationPhase(phase);
-                        handler.postDelayed(this, 55);
-                        return;
-                    }
+            if (!playing || current == null) {
+                playing = false;
+                updatePlaybackButton();
+                return;
+            }
+            if (current.hasVibrations()) {
+                Molecule.VibrationMode vibration = current.vibrationAt(vibrationIndex);
+                if (vibration != null && vibration.hasDisplacement()) {
+                    vibrationTick = (vibrationTick + 1) % 48;
+                    float phase = (float) (vibrationTick * Math.PI * 2.0 / 48.0);
+                    moleculeView.setVibrationPhase(phase);
+                    handler.postDelayed(this, 55);
+                    return;
                 }
+                playing = false;
+                updatePlaybackButton();
+                return;
+            }
+            if (current.frameCount() <= 1) {
                 playing = false;
                 updatePlaybackButton();
                 return;

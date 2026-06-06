@@ -1,7 +1,9 @@
 package io.iaw.molview;
 
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 final class Molecule {
     final String title;
@@ -9,7 +11,6 @@ final class Molecule {
     final List<Atom> atoms;
     final List<Frame> frames;
     final List<Bond> bonds;
-    final List<Bond> traceBonds;
     final List<VibrationMode> vibrations;
     final List<String> infoLines;
 
@@ -18,10 +19,9 @@ final class Molecule {
             String sourceType,
             List<Atom> atoms,
             List<Frame> frames,
-            List<Bond> bonds,
-            List<Bond> traceBonds
+            List<Bond> bonds
     ) {
-        this(title, sourceType, atoms, frames, bonds, traceBonds, new ArrayList<VibrationMode>(), new ArrayList<String>());
+        this(title, sourceType, atoms, frames, bonds, new ArrayList<VibrationMode>(), new ArrayList<String>());
     }
 
     Molecule(
@@ -30,10 +30,9 @@ final class Molecule {
             List<Atom> atoms,
             List<Frame> frames,
             List<Bond> bonds,
-            List<Bond> traceBonds,
             List<VibrationMode> vibrations
     ) {
-        this(title, sourceType, atoms, frames, bonds, traceBonds, vibrations, new ArrayList<String>());
+        this(title, sourceType, atoms, frames, bonds, vibrations, new ArrayList<String>());
     }
 
     Molecule(
@@ -42,7 +41,6 @@ final class Molecule {
             List<Atom> atoms,
             List<Frame> frames,
             List<Bond> bonds,
-            List<Bond> traceBonds,
             List<VibrationMode> vibrations,
             List<String> infoLines
     ) {
@@ -51,7 +49,6 @@ final class Molecule {
         this.atoms = atoms;
         this.frames = frames;
         this.bonds = bonds;
-        this.traceBonds = traceBonds;
         this.vibrations = vibrations == null ? new ArrayList<VibrationMode>() : vibrations;
         this.infoLines = infoLines == null ? new ArrayList<String>() : infoLines;
     }
@@ -153,6 +150,14 @@ final class Molecule {
         return builder.length() == 0 ? summary() : builder.toString();
     }
 
+    List<String> elementsInUse() {
+        Set<String> seen = new LinkedHashSet<>();
+        for (Atom atom : atoms) {
+            seen.add(atom.element);
+        }
+        return new ArrayList<>(seen);
+    }
+
     static final class Atom {
         final String element;
         final String name;
@@ -235,9 +240,5 @@ final class Molecule {
             }
             return max;
         }
-    }
-
-    static List<Bond> emptyBonds() {
-        return new ArrayList<>();
     }
 }

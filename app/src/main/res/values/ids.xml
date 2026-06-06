@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <item name="btn_open" type="id" />
+    <item name="btn_style" type="id" />
+    <item name="btn_prev" type="id" />
+    <item name="btn_play" type="id" />
+    <item name="btn_next" type="id" />
+    <item name="btn_reset" type="id" />
+    <item name="btn_theme" type="id" />
+    <item name="btn_details" type="id" />
+    <item name="btn_source" type="id" />
+</resources>

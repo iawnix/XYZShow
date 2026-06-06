@@ -100,6 +100,7 @@ public final class DetailsActivity extends Activity {
         button.setScaleType(ImageView.ScaleType.CENTER);
         button.setPadding(dp(10), dp(10), dp(10), dp(10));
         button.setContentDescription(description);
+        button.setTooltipText(description);
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
         return button;

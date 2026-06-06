@@ -6,6 +6,7 @@ import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.opengl.Matrix;
 import android.view.MotionEvent;
+import android.view.ViewConfiguration;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -28,7 +29,9 @@ final class MoleculeView extends GLSurfaceView {
     private static final float MAX_ZOOM = 18f;
 
     private final MoleculeRenderer renderer;
+    private final float touchSlop;
     private Molecule molecule;
+    private GestureListener gestureListener;
     private int frameIndex;
     private int vibrationIndex;
     private float vibrationPhase;
@@ -44,6 +47,11 @@ final class MoleculeView extends GLSurfaceView {
     private float lastSpan;
     private float lastFocusX;
     private float lastFocusY;
+    private float downX;
+    private float downY;
+    private boolean movedDuringGesture;
+    private boolean multiTouchDuringGesture;
+    private long lastTapMs;
 
     MoleculeView(Context context) {
         super(context);
@@ -54,6 +62,11 @@ final class MoleculeView extends GLSurfaceView {
         setRenderer(renderer);
         setRenderMode(RENDERMODE_WHEN_DIRTY);
         setFocusable(true);
+        touchSlop = ViewConfiguration.get(context).getScaledTouchSlop();
+    }
+
+    void setGestureListener(GestureListener listener) {
+        gestureListener = listener;
     }
 
     void setMolecule(Molecule molecule) {
@@ -199,6 +212,18 @@ final class MoleculeView extends GLSurfaceView {
         requestRender();
     }
 
+    void releaseGl() {
+        try {
+            queueEvent(new Runnable() {
+                @Override
+                public void run() {
+                    renderer.releaseGl();
+                }
+            });
+        } catch (IllegalStateException ignored) {
+        }
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         if (molecule == null) {
@@ -211,10 +236,15 @@ final class MoleculeView extends GLSurfaceView {
         if (action == MotionEvent.ACTION_DOWN) {
             lastX = event.getX();
             lastY = event.getY();
+            downX = lastX;
+            downY = lastY;
             lastSpan = 0f;
+            movedDuringGesture = false;
+            multiTouchDuringGesture = false;
             return true;
         }
         if (action == MotionEvent.ACTION_POINTER_DOWN) {
+            multiTouchDuringGesture = true;
             rememberPinch(event);
             return true;
         }
@@ -226,8 +256,8 @@ final class MoleculeView extends GLSurfaceView {
                 if (lastSpan > 0f) {
                     zoom = clamp(zoom * (span / lastSpan), MIN_ZOOM, MAX_ZOOM);
                     float unit = Math.max(1f, Math.min(getWidth(), getHeight()));
-                    panX += 2f * (focusX - lastFocusX) / unit;
-                    panY -= 2f * (focusY - lastFocusY) / unit;
+                    panX += 2f * (focusX - lastFocusX) / unit / Math.max(zoom, MIN_ZOOM);
+                    panY -= 2f * (focusY - lastFocusY) / unit / Math.max(zoom, MIN_ZOOM);
                 }
                 lastSpan = span;
                 lastFocusX = focusX;
@@ -235,6 +265,7 @@ final class MoleculeView extends GLSurfaceView {
             } else {
                 float x = event.getX();
                 float y = event.getY();
+                movedDuringGesture |= distance(x - downX, y - downY) > touchSlop;
                 yaw += (x - lastX) * 0.012f;
                 pitch = clamp(pitch + (y - lastY) * 0.012f, MIN_PITCH, MAX_PITCH);
                 lastX = x;
@@ -264,16 +295,47 @@ final class MoleculeView extends GLSurfaceView {
         }
         if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
             lastSpan = 0f;
+            if (action == MotionEvent.ACTION_UP && !movedDuringGesture && !multiTouchDuringGesture) {
+                performClick();
+                handleTap();
+            }
             return true;
         }
         return true;
     }
 
+    @Override
+    public boolean performClick() {
+        super.performClick();
+        return true;
+    }
+
+    private void handleTap() {
+        long now = android.os.SystemClock.uptimeMillis();
+        if (now - lastTapMs <= ViewConfiguration.getDoubleTapTimeout()) {
+            lastTapMs = 0L;
+            resetView();
+            if (gestureListener != null) {
+                gestureListener.onDoubleTap();
+            }
+            return;
+        }
+        lastTapMs = now;
+        if (gestureListener != null) {
+            gestureListener.onSingleTap();
+        }
+    }
+
     private void queueCamera() {
+        final float queuedYaw = yaw;
+        final float queuedPitch = pitch;
+        final float queuedZoom = zoom;
+        final float queuedPanX = panX;
+        final float queuedPanY = panY;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setViewState(yaw, pitch, zoom, panX, panY);
+                renderer.setViewState(queuedYaw, queuedPitch, queuedZoom, queuedPanX, queuedPanY);
             }
         });
         requestRender();
@@ -341,6 +403,10 @@ final class MoleculeView extends GLSurfaceView {
         return count == 0 ? 0f : sum / count;
     }
 
+    private static float distance(float dx, float dy) {
+        return (float) Math.sqrt(dx * dx + dy * dy);
+    }
+
     private int remainingPointerCount(MotionEvent event, int skipPointerIndex) {
         return event.getPointerCount() - (skipPointerIndex >= 0 ? 1 : 0);
     }
@@ -371,6 +437,12 @@ final class MoleculeView extends GLSurfaceView {
 
     private float clamp(float value, float min, float max) {
         return Math.max(min, Math.min(max, value));
+    }
+
+    interface GestureListener {
+        void onSingleTap();
+
+        void onDoubleTap();
     }
 
     private float fitZoomFor(Molecule molecule) {
@@ -479,7 +551,8 @@ final class MoleculeView extends GLSurfaceView {
         private float panY;
         private int width = 1;
         private int height = 1;
-        private boolean dirty = true;
+        private boolean topologyDirty = true;
+        private boolean positionsDirty = true;
 
         private int pointProgram;
         private int lineProgram;
@@ -488,6 +561,11 @@ final class MoleculeView extends GLSurfaceView {
         private FloatBuffer atomRadii;
         private FloatBuffer linePositions;
         private FloatBuffer lineColors;
+        private float[] atomPositionArray;
+        private float[] atomColorArray;
+        private float[] atomRadiusArray;
+        private float[] linePositionArray;
+        private float[] lineColorArray;
         private int atomCount;
         private int lineVertexCount;
 
@@ -496,7 +574,8 @@ final class MoleculeView extends GLSurfaceView {
             this.frameIndex = 0;
             this.vibrationIndex = 0;
             this.vibrationPhase = 0f;
-            this.dirty = true;
+            this.topologyDirty = true;
+            this.positionsDirty = true;
         }
 
         void setFrameIndex(int frameIndex) {
@@ -505,7 +584,7 @@ final class MoleculeView extends GLSurfaceView {
             } else {
                 this.frameIndex = Math.max(0, Math.min(frameIndex, molecule.frameCount() - 1));
             }
-            this.dirty = true;
+            this.positionsDirty = true;
         }
 
         void setVibration(int vibrationIndex, float vibrationPhase) {
@@ -515,12 +594,13 @@ final class MoleculeView extends GLSurfaceView {
                 this.vibrationIndex = Math.max(0, Math.min(vibrationIndex, molecule.vibrationCount() - 1));
             }
             this.vibrationPhase = vibrationPhase;
-            this.dirty = true;
+            this.positionsDirty = true;
         }
 
         void setMode(int mode) {
             this.mode = mode;
-            this.dirty = true;
+            this.topologyDirty = true;
+            this.positionsDirty = true;
         }
 
         void setViewState(float yaw, float pitch, float zoom, float panX, float panY) {
@@ -536,8 +616,18 @@ final class MoleculeView extends GLSurfaceView {
             applyClearColor();
         }
 
+        void releaseGl() {
+            deletePrograms();
+            atomPositions = null;
+            atomColors = null;
+            atomRadii = null;
+            linePositions = null;
+            lineColors = null;
+        }
+
         @Override
         public void onSurfaceCreated(GL10 gl, EGLConfig config) {
+            deletePrograms();
             applyClearColor();
             GLES20.glEnable(GLES20.GL_DEPTH_TEST);
             GLES20.glDepthFunc(GLES20.GL_LEQUAL);
@@ -545,7 +635,8 @@ final class MoleculeView extends GLSurfaceView {
             GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
             pointProgram = buildProgram(POINT_VERTEX_SHADER, POINT_FRAGMENT_SHADER);
             lineProgram = buildProgram(LINE_VERTEX_SHADER, LINE_FRAGMENT_SHADER);
-            dirty = true;
+            topologyDirty = true;
+            positionsDirty = true;
         }
 
         private void applyClearColor() {
@@ -569,16 +660,41 @@ final class MoleculeView extends GLSurfaceView {
             if (molecule == null || molecule.atomCount() == 0 || pointProgram == 0 || lineProgram == 0) {
                 return;
             }
-            if (dirty) {
-                rebuildBuffers();
-                dirty = false;
+            if (topologyDirty) {
+                rebuildTopologyBuffers();
+                topologyDirty = false;
+                positionsDirty = true;
+            }
+            if (positionsDirty) {
+                rebuildPositionBuffers();
+                positionsDirty = false;
             }
             buildMatrix();
             drawLines();
             drawAtoms();
         }
 
-        private void rebuildBuffers() {
+        private void rebuildTopologyBuffers() {
+            atomCount = molecule.atomCount();
+            atomColorArray = ensureArray(atomColorArray, atomCount * 4);
+            atomRadiusArray = ensureArray(atomRadiusArray, atomCount);
+            float density = atomCount > 6000 ? 0.36f : atomCount > 1500 ? 0.56f : 1f;
+            float modeScale = mode == MODE_STICKS ? 0.12f : 0.42f;
+            for (int i = 0; i < atomCount; i++) {
+                Molecule.Atom atom = molecule.atoms.get(i);
+                int color = ElementTable.color(atom.element);
+                int colorIndex = i * 4;
+                atomColorArray[colorIndex] = Color.red(color) / 255f;
+                atomColorArray[colorIndex + 1] = Color.green(color) / 255f;
+                atomColorArray[colorIndex + 2] = Color.blue(color) / 255f;
+                atomColorArray[colorIndex + 3] = 1f;
+                atomRadiusArray[i] = ElementTable.radius(atom.element) * modeScale * density;
+            }
+            atomColors = putBuffer(atomColors, atomColorArray, atomCount * 4);
+            atomRadii = putBuffer(atomRadii, atomRadiusArray, atomCount);
+        }
+
+        private void rebuildPositionBuffers() {
             Molecule.Frame frame = molecule.frameAt(frameIndex);
             atomCount = molecule.atomCount();
             float[] center = molecule.centerForFrame(frameIndex);
@@ -590,11 +706,7 @@ final class MoleculeView extends GLSurfaceView {
                 vibrate = (float) Math.sin(vibrationPhase);
                 vibrationScale = vibrationScale(vibration, extent);
             }
-            float[] atomPositionArray = new float[atomCount * 3];
-            float[] atomColorArray = new float[atomCount * 4];
-            float[] atomRadiusArray = new float[atomCount];
-            float density = atomCount > 6000 ? 0.36f : atomCount > 1500 ? 0.56f : 1f;
-            float modeScale = mode == MODE_STICKS ? 0.12f : 0.42f;
+            atomPositionArray = ensureArray(atomPositionArray, atomCount * 3);
 
             for (int i = 0; i < atomCount; i++) {
                 int source = i * 3;
@@ -610,20 +722,9 @@ final class MoleculeView extends GLSurfaceView {
                 atomPositionArray[target] = (x - center[0]) / extent;
                 atomPositionArray[target + 1] = (y - center[1]) / extent;
                 atomPositionArray[target + 2] = (z - center[2]) / extent;
-
-                Molecule.Atom atom = molecule.atoms.get(i);
-                int color = ElementTable.color(atom.element);
-                int colorIndex = i * 4;
-                atomColorArray[colorIndex] = Color.red(color) / 255f;
-                atomColorArray[colorIndex + 1] = Color.green(color) / 255f;
-                atomColorArray[colorIndex + 2] = Color.blue(color) / 255f;
-                atomColorArray[colorIndex + 3] = 1f;
-                atomRadiusArray[i] = ElementTable.radius(atom.element) * modeScale * density;
             }
 
-            atomPositions = floatBuffer(atomPositionArray);
-            atomColors = floatBuffer(atomColorArray);
-            atomRadii = floatBuffer(atomRadiusArray);
+            atomPositions = putBuffer(atomPositions, atomPositionArray, atomCount * 3);
             rebuildLineBuffers(atomPositionArray);
         }
 
@@ -638,9 +739,9 @@ final class MoleculeView extends GLSurfaceView {
 
         private void rebuildLineBuffers(float[] atomPositionArray) {
             List<Molecule.Bond> drawBonds = molecule.bonds;
-            lineVertexCount = drawBonds.size() * 2;
-            float[] positions = new float[lineVertexCount * 3];
-            float[] colors = new float[lineVertexCount * 4];
+            int maxLineVertexCount = drawBonds.size() * 2;
+            linePositionArray = ensureArray(linePositionArray, maxLineVertexCount * 3);
+            lineColorArray = ensureArray(lineColorArray, maxLineVertexCount * 4);
             float a = mode == MODE_STICKS ? 0.98f : 0.82f;
             int vertex = 0;
             for (Molecule.Bond bond : drawBonds) {
@@ -674,22 +775,22 @@ final class MoleculeView extends GLSurfaceView {
                 }
 
                 int pi = vertex * 3;
-                positions[pi] = ax + ux * trimA;
-                positions[pi + 1] = ay + uy * trimA;
-                positions[pi + 2] = az + uz * trimA;
-                putElementColor(colors, vertex, molecule.atoms.get(bond.a).element, a);
+                linePositionArray[pi] = ax + ux * trimA;
+                linePositionArray[pi + 1] = ay + uy * trimA;
+                linePositionArray[pi + 2] = az + uz * trimA;
+                putElementColor(lineColorArray, vertex, molecule.atoms.get(bond.a).element, a);
                 vertex++;
 
                 pi = vertex * 3;
-                positions[pi] = bx - ux * trimB;
-                positions[pi + 1] = by - uy * trimB;
-                positions[pi + 2] = bz - uz * trimB;
-                putElementColor(colors, vertex, molecule.atoms.get(bond.b).element, a);
+                linePositionArray[pi] = bx - ux * trimB;
+                linePositionArray[pi + 1] = by - uy * trimB;
+                linePositionArray[pi + 2] = bz - uz * trimB;
+                putElementColor(lineColorArray, vertex, molecule.atoms.get(bond.b).element, a);
                 vertex++;
             }
             lineVertexCount = vertex;
-            linePositions = floatBuffer(positions);
-            lineColors = floatBuffer(colors);
+            linePositions = putBuffer(linePositions, linePositionArray, lineVertexCount * 3);
+            lineColors = putBuffer(lineColors, lineColorArray, lineVertexCount * 4);
         }
 
         private void buildMatrix() {
@@ -788,30 +889,65 @@ final class MoleculeView extends GLSurfaceView {
             colors[i + 3] = a;
         }
 
-        private static FloatBuffer floatBuffer(float[] values) {
-            ByteBuffer bytes = ByteBuffer.allocateDirect(values.length * 4);
-            bytes.order(ByteOrder.nativeOrder());
-            FloatBuffer buffer = bytes.asFloatBuffer();
-            buffer.put(values);
-            buffer.position(0);
+        private static float[] ensureArray(float[] array, int length) {
+            return array != null && array.length >= length ? array : new float[length];
+        }
+
+        private static FloatBuffer putBuffer(FloatBuffer buffer, float[] values, int length) {
+            if (buffer == null || buffer.capacity() < length) {
+                ByteBuffer bytes = ByteBuffer.allocateDirect(Math.max(1, length) * 4);
+                bytes.order(ByteOrder.nativeOrder());
+                buffer = bytes.asFloatBuffer();
+            }
+            buffer.clear();
+            if (length > 0) {
+                buffer.put(values, 0, length);
+            }
+            buffer.flip();
             return buffer;
+        }
+
+        private void deletePrograms() {
+            if (pointProgram != 0) {
+                GLES20.glDeleteProgram(pointProgram);
+                pointProgram = 0;
+            }
+            if (lineProgram != 0) {
+                GLES20.glDeleteProgram(lineProgram);
+                lineProgram = 0;
+            }
         }
 
         private static int buildProgram(String vertexSource, String fragmentSource) {
             int vertex = compileShader(GLES20.GL_VERTEX_SHADER, vertexSource);
-            int fragment = compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentSource);
-            int program = GLES20.glCreateProgram();
-            GLES20.glAttachShader(program, vertex);
-            GLES20.glAttachShader(program, fragment);
-            GLES20.glLinkProgram(program);
-            int[] status = new int[1];
-            GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0);
-            if (status[0] == 0) {
-                String error = GLES20.glGetProgramInfoLog(program);
-                GLES20.glDeleteProgram(program);
-                throw new IllegalStateException(error);
+            int fragment = 0;
+            int program = 0;
+            try {
+                fragment = compileShader(GLES20.GL_FRAGMENT_SHADER, fragmentSource);
+                program = GLES20.glCreateProgram();
+                GLES20.glAttachShader(program, vertex);
+                GLES20.glAttachShader(program, fragment);
+                GLES20.glLinkProgram(program);
+                GLES20.glDeleteShader(vertex);
+                GLES20.glDeleteShader(fragment);
+                vertex = 0;
+                fragment = 0;
+                int[] status = new int[1];
+                GLES20.glGetProgramiv(program, GLES20.GL_LINK_STATUS, status, 0);
+                if (status[0] == 0) {
+                    String error = GLES20.glGetProgramInfoLog(program);
+                    GLES20.glDeleteProgram(program);
+                    throw new IllegalStateException(error);
+                }
+                return program;
+            } finally {
+                if (vertex != 0) {
+                    GLES20.glDeleteShader(vertex);
+                }
+                if (fragment != 0) {
+                    GLES20.glDeleteShader(fragment);
+                }
             }
-            return program;
         }
 
         private static int compileShader(int type, String source) {

@@ -70,42 +70,6 @@ final class ElementTable {
         return RADII.containsKey(one) ? one : "X";
     }
 
-    static String inferPdbElement(String atomName, String elementColumn) {
-        String fromColumn = normalizeElement(elementColumn);
-        if (!"X".equals(fromColumn)) {
-            return fromColumn;
-        }
-        if (atomName == null) {
-            return "X";
-        }
-        String cleaned = atomName.trim().replaceAll("^[0-9]+", "");
-        if (cleaned.isEmpty()) {
-            return "X";
-        }
-        char first = 0;
-        char second = 0;
-        int found = 0;
-        for (int i = 0; i < cleaned.length(); i++) {
-            char c = cleaned.charAt(i);
-            if (Character.isLetter(c)) {
-                if (found == 0) {
-                    first = c;
-                } else if (found == 1) {
-                    second = c;
-                    break;
-                }
-                found++;
-            }
-        }
-        if (found == 0) {
-            return "X";
-        }
-        if (found > 1 && Character.isLowerCase(second)) {
-            return normalizeElement("" + first + second);
-        }
-        return normalizeElement("" + first);
-    }
-
     static String elementForAtomicNumber(int atomicNumber) {
         if (atomicNumber > 0 && atomicNumber < ATOMIC_SYMBOLS.length) {
             return normalizeElement(ATOMIC_SYMBOLS[atomicNumber]);
@@ -121,6 +85,10 @@ final class ElementTable {
     static int color(String element) {
         Integer color = COLORS.get(normalizeElement(element));
         return color == null ? Color.rgb(175, 183, 194) : color;
+    }
+
+    static String hexColor(String element) {
+        return String.format(Locale.US, "#%06X", 0xFFFFFF & color(element));
     }
 
     private static void put(String element, float radius, int color) {

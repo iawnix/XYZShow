@@ -2,6 +2,7 @@ package io.iaw.molview;
 
 import android.app.Activity;
 import android.content.Context;
+import android.content.res.Configuration;
 import android.view.View;
 import android.view.Window;
 
@@ -15,7 +16,11 @@ final class AppTheme {
     }
 
     static boolean isLight(Context context) {
-        return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LIGHT, false);
+        if (context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).contains(KEY_LIGHT)) {
+            return context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean(KEY_LIGHT, false);
+        }
+        int mode = context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK;
+        return mode != Configuration.UI_MODE_NIGHT_YES;
     }
 
     static void setLight(Context context, boolean light) {

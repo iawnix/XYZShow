@@ -1,6 +1,7 @@
 package io.iaw.molview;
 
 import android.app.Activity;
+import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
@@ -37,7 +38,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public final class MainActivity extends Activity implements View.OnClickListener, SeekBar.OnSeekBarChangeListener {
+public final class MainActivity extends Activity implements View.OnClickListener, SeekBar.OnSeekBarChangeListener, MoleculeView.GestureListener {
     private static final int REQUEST_OPEN = 41;
     private static final int COLOR_BG = 0xff1c1c1e;
     private static final int COLOR_PANEL = 0xff242426;
@@ -79,6 +80,10 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private static final String STATE_ZOOM = "zoom";
     private static final String STATE_PAN_X = "pan_x";
     private static final String STATE_PAN_Y = "pan_y";
+    private static final String STATE_SESSION_ONLY_SOURCE = "session_only_source";
+
+    private static LoadedMolecule lastLoadedMolecule;
+    private static String lastLoadedKey = "";
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService loadExecutor = Executors.newSingleThreadExecutor();
@@ -111,7 +116,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private boolean playing;
     private boolean lightBackground;
     private boolean loading;
+    private boolean chromeHidden;
     private boolean pendingRestoreView;
+    private boolean sessionOnlySource;
     private int pendingFrameIndex;
     private int pendingVibrationIndex;
     private int pendingDisplayMode;
@@ -131,7 +138,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         lightBackground = AppTheme.isLight(this);
         configureSystemBars();
         buildLayout();
-        if (!restoreLoadedMolecule(savedInstanceState)) {
+        if (!restoreLoadedMolecule(savedInstanceState) && !openFromViewIntent(getIntent())) {
             loadDefaultMolecule();
         }
     }
@@ -139,8 +146,8 @@ public final class MainActivity extends Activity implements View.OnClickListener
     @Override
     protected void onSaveInstanceState(Bundle outState) {
         super.onSaveInstanceState(outState);
-        int sourceKind = currentSourceUri != null ? SourceTextStore.KIND_URI
-                : currentAssetPath.isEmpty() ? SourceTextStore.KIND_NONE : SourceTextStore.KIND_ASSET;
+        int sourceKind = currentSourceUri != null ? SourceKind.URI
+                : currentAssetPath.isEmpty() ? SourceKind.NONE : SourceKind.ASSET;
         outState.putInt(STATE_SOURCE_KIND, sourceKind);
         outState.putString(STATE_SOURCE_URI, currentSourceUri == null ? "" : currentSourceUri.toString());
         outState.putString(STATE_ASSET_PATH, currentAssetPath);
@@ -155,6 +162,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         outState.putFloat(STATE_ZOOM, moleculeView == null ? 1f : moleculeView.getZoom());
         outState.putFloat(STATE_PAN_X, moleculeView == null ? 0f : moleculeView.getPanX());
         outState.putFloat(STATE_PAN_Y, moleculeView == null ? 0f : moleculeView.getPanY());
+        outState.putBoolean(STATE_SESSION_ONLY_SOURCE, sessionOnlySource);
     }
 
     @Override
@@ -179,7 +187,20 @@ public final class MainActivity extends Activity implements View.OnClickListener
         stopPlayback();
         loadGeneration.incrementAndGet();
         loadExecutor.shutdownNow();
+        if (moleculeView != null) {
+            moleculeView.releaseGl();
+        }
         super.onDestroy();
+    }
+
+    @Override
+    public void onConfigurationChanged(Configuration newConfig) {
+        super.onConfigurationChanged(newConfig);
+        lightBackground = AppTheme.isLight(this);
+        applyChromeTheme();
+        if (rootLayout != null) {
+            rootLayout.requestApplyInsets();
+        }
     }
 
     private void buildLayout() {
@@ -189,28 +210,29 @@ public final class MainActivity extends Activity implements View.OnClickListener
 
         viewHost = new FrameLayout(this);
         moleculeView = new MoleculeView(this);
+        moleculeView.setGestureListener(this);
         viewHost.addView(moleculeView, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
         ));
 
         openButton = railButton("Open", R.drawable.ic_folder_open);
-        openButton.setId(1);
+        openButton.setId(R.id.btn_open);
         openButton.setOnClickListener(this);
         modeButton = railButton(styleButtonText(), R.drawable.ic_style);
-        modeButton.setId(3);
+        modeButton.setId(R.id.btn_style);
         modeButton.setOnClickListener(this);
         resetButton = railButton("Reset view", R.drawable.ic_reset);
-        resetButton.setId(7);
+        resetButton.setId(R.id.btn_reset);
         resetButton.setOnClickListener(this);
         themeButton = railButton("Toggle background", R.drawable.ic_bg_dark);
-        themeButton.setId(8);
+        themeButton.setId(R.id.btn_theme);
         themeButton.setOnClickListener(this);
         sourceButton = railButton("Source text", R.drawable.ic_source);
-        sourceButton.setId(10);
+        sourceButton.setId(R.id.btn_source);
         sourceButton.setOnClickListener(this);
         infoButton = railButton("Details", R.drawable.ic_info);
-        infoButton.setId(9);
+        infoButton.setId(R.id.btn_details);
         infoButton.setOnClickListener(this);
 
         topToolBar = new LinearLayout(this);
@@ -254,13 +276,13 @@ public final class MainActivity extends Activity implements View.OnClickListener
         controls.setBackgroundColor(COLOR_PANEL);
         controls.setPadding(dp(8), dp(8), dp(8), dp(8));
         playButton = railButton("Play", R.drawable.ic_play);
-        playButton.setId(5);
+        playButton.setId(R.id.btn_play);
         playButton.setOnClickListener(this);
         prevButton = railButton("Previous mode", R.drawable.ic_prev);
-        prevButton.setId(4);
+        prevButton.setId(R.id.btn_prev);
         prevButton.setOnClickListener(this);
         nextButton = railButton("Next mode", R.drawable.ic_next);
-        nextButton.setId(6);
+        nextButton.setId(R.id.btn_next);
         nextButton.setOnClickListener(this);
         frameSeek = new SeekBar(this);
         frameSeek.setOnSeekBarChangeListener(this);
@@ -342,29 +364,29 @@ public final class MainActivity extends Activity implements View.OnClickListener
     public void onClick(View view) {
         view.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP);
         int id = view.getId();
-        if (id == 1) {
+        if (id == R.id.btn_open) {
             openFile();
-        } else if (id == 3) {
+        } else if (id == R.id.btn_style) {
             moleculeView.cycleMode();
             updateModeButton();
             updateStatus();
-        } else if (id == 4) {
+        } else if (id == R.id.btn_prev) {
             stopPlayback();
             setFrame(navigationIndex() - 1);
-        } else if (id == 5) {
+        } else if (id == R.id.btn_play) {
             togglePlayback();
-        } else if (id == 6) {
+        } else if (id == R.id.btn_next) {
             stopPlayback();
             setFrame(navigationIndex() + 1);
-        } else if (id == 7) {
+        } else if (id == R.id.btn_reset) {
             moleculeView.resetView();
-        } else if (id == 8) {
+        } else if (id == R.id.btn_theme) {
             lightBackground = !lightBackground;
             AppTheme.setLight(this, lightBackground);
             applyChromeTheme();
-        } else if (id == 9) {
+        } else if (id == R.id.btn_details) {
             showDetailsPage();
-        } else if (id == 10) {
+        } else if (id == R.id.btn_source) {
             showSourcePage();
         }
     }
@@ -385,13 +407,23 @@ public final class MainActivity extends Activity implements View.OnClickListener
     public void onStopTrackingTouch(SeekBar seekBar) {
     }
 
+    @Override
+    public void onSingleTap() {
+        chromeHidden = !chromeHidden;
+        updateChromeVisibility();
+    }
+
+    @Override
+    public void onDoubleTap() {
+        chromeHidden = false;
+        updateChromeVisibility();
+    }
+
     private void openFile() {
         stopPlayback();
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("*/*");
-        intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION
-                | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
         intent.putExtra(Intent.EXTRA_MIME_TYPES, new String[]{
                 "chemical/x-xyz",
                 "text/plain",
@@ -410,20 +442,18 @@ public final class MainActivity extends Activity implements View.OnClickListener
         Uri uri = data.getData();
         int flags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION
                 | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+        boolean persisted = false;
         if ((flags & Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0) {
             try {
                 getContentResolver().takePersistableUriPermission(uri,
                         Intent.FLAG_GRANT_READ_URI_PERMISSION);
-            } catch (SecurityException ignored) {
+                persisted = true;
+            } catch (SecurityException ex) {
+                Toast.makeText(this, "File access is session-only. Reopen if Android removes access.", Toast.LENGTH_LONG).show();
             }
         }
         String name = displayName(uri);
-        currentSourceUri = uri;
-        currentAssetPath = "";
-        currentSourceLabel = "File";
-        currentFileName = name;
-        currentSourceTitle = "File  -  " + name;
-        pendingRestoreView = false;
+        setUriSource(uri, name, "File", !persisted);
         loadMoleculeAsync(new UriLoader(uri, name), "File", name);
     }
 
@@ -434,6 +464,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentSourceLabel = "Default";
         currentFileName = DEFAULT_ASSET;
         currentSourceTitle = "Default  -  " + DEFAULT_ASSET;
+        sessionOnlySource = false;
         pendingRestoreView = false;
         loadMoleculeAsync(new AssetLoader(DEFAULT_ASSET), "Default", DEFAULT_ASSET);
     }
@@ -442,11 +473,12 @@ public final class MainActivity extends Activity implements View.OnClickListener
         if (state == null) {
             return false;
         }
-        int sourceKind = state.getInt(STATE_SOURCE_KIND, SourceTextStore.KIND_NONE);
+        int sourceKind = state.getInt(STATE_SOURCE_KIND, SourceKind.NONE);
         String fileName = state.getString(STATE_FILE_NAME, "");
         String sourceLabel = state.getString(STATE_SOURCE_LABEL, "");
         currentSourceTitle = state.getString(STATE_SOURCE_TITLE, "");
-        if (sourceKind == SourceTextStore.KIND_URI) {
+        sessionOnlySource = state.getBoolean(STATE_SESSION_ONLY_SOURCE, false);
+        if (sourceKind == SourceKind.URI) {
             String uriText = state.getString(STATE_SOURCE_URI, "");
             if (uriText == null || uriText.isEmpty()) {
                 return false;
@@ -457,10 +489,16 @@ public final class MainActivity extends Activity implements View.OnClickListener
             currentAssetPath = "";
             currentSourceLabel = sourceLabel.isEmpty() ? "File" : sourceLabel;
             currentFileName = fileName.isEmpty() ? displayName(uri) : fileName;
+            if (displayCachedMolecule(sourceKey(SourceKind.URI, uri.toString()),
+                    currentSourceLabel,
+                    currentFileName,
+                    new UriLoader(uri, currentFileName))) {
+                return true;
+            }
             loadMoleculeAsync(new UriLoader(uri, currentFileName), currentSourceLabel, currentFileName);
             return true;
         }
-        if (sourceKind == SourceTextStore.KIND_ASSET) {
+        if (sourceKind == SourceKind.ASSET) {
             String assetPath = state.getString(STATE_ASSET_PATH, "");
             if (assetPath == null || assetPath.isEmpty()) {
                 return false;
@@ -470,10 +508,37 @@ public final class MainActivity extends Activity implements View.OnClickListener
             currentAssetPath = assetPath;
             currentSourceLabel = sourceLabel.isEmpty() ? "Default" : sourceLabel;
             currentFileName = fileName.isEmpty() ? assetPath : fileName;
+            if (displayCachedMolecule(sourceKey(SourceKind.ASSET, assetPath),
+                    currentSourceLabel,
+                    currentFileName,
+                    new AssetLoader(assetPath))) {
+                return true;
+            }
             loadMoleculeAsync(new AssetLoader(assetPath), currentSourceLabel, currentFileName);
             return true;
         }
         return false;
+    }
+
+    private boolean openFromViewIntent(Intent intent) {
+        if (intent == null || !Intent.ACTION_VIEW.equals(intent.getAction()) || intent.getData() == null) {
+            return false;
+        }
+        Uri uri = intent.getData();
+        String name = displayName(uri);
+        setUriSource(uri, name, "File", true);
+        loadMoleculeAsync(new UriLoader(uri, name), "File", name);
+        return true;
+    }
+
+    private void setUriSource(Uri uri, String name, String sourceLabel, boolean sessionOnly) {
+        currentSourceUri = uri;
+        currentAssetPath = "";
+        currentSourceLabel = sourceLabel == null || sourceLabel.isEmpty() ? "File" : sourceLabel;
+        currentFileName = name == null || name.isEmpty() ? displayName(uri) : name;
+        currentSourceTitle = currentSourceLabel + "  -  " + currentFileName;
+        sessionOnlySource = sessionOnly;
+        pendingRestoreView = false;
     }
 
     private void capturePendingRestore(Bundle state) {
@@ -491,6 +556,12 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private void loadMoleculeAsync(final MoleculeLoader loader, final String sourceLabel, final String fileName) {
         final int generation = loadGeneration.incrementAndGet();
         stopPlayback();
+        LoadedMolecule cached = cachedMolecule(loader);
+        if (cached != null) {
+            displayMolecule(cached.molecule, sourceLabel, fileName, loader);
+            setLoading(false, "");
+            return;
+        }
         setLoading(true, "Loading " + fileName + "...");
         loadExecutor.execute(new Runnable() {
             @Override
@@ -503,6 +574,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
                             if (generation != loadGeneration.get()) {
                                 return;
                             }
+                            cacheMolecule(loader, loaded);
                             displayMolecule(loaded.molecule, sourceLabel, fileName, loader);
                             setLoading(false, "");
                         }
@@ -516,9 +588,10 @@ public final class MainActivity extends Activity implements View.OnClickListener
                             }
                             pendingRestoreView = false;
                             setLoading(false, "");
-                            Toast.makeText(MainActivity.this, ex.getMessage(), Toast.LENGTH_LONG).show();
+                            String message = loadErrorMessage(ex);
+                            Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                             if (statusView != null) {
-                                statusView.setText("Load failed\n" + ex.getMessage()
+                                statusView.setText("Load failed\n" + message
                                         + "\nUse the source-text button to inspect this file.");
                             }
                         }
@@ -555,6 +628,23 @@ public final class MainActivity extends Activity implements View.OnClickListener
         if (statusView != null && loading) {
             statusView.setText(message);
         }
+        updateChromeVisibility();
+    }
+
+    private void updateChromeVisibility() {
+        int visibility = chromeHidden ? View.GONE : View.VISIBLE;
+        if (titleView != null) {
+            titleView.setVisibility(visibility);
+        }
+        if (topToolBar != null) {
+            topToolBar.setVisibility(visibility);
+        }
+        if (controls != null) {
+            controls.setVisibility(visibility);
+        }
+        if (statusView != null) {
+            statusView.setVisibility(visibility);
+        }
     }
 
     private Molecule parseXyzFile(String text, String sourceName) throws IOException {
@@ -586,6 +676,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentFileName = fileName == null ? "" : fileName;
         currentSourceUri = loader instanceof UriLoader ? ((UriLoader) loader).uri : null;
         currentAssetPath = loader instanceof AssetLoader ? ((AssetLoader) loader).assetPath : "";
+        if (loader instanceof AssetLoader) {
+            sessionOnlySource = false;
+        }
         currentSourceTitle = titleText();
         int restoreVibration = pendingRestoreView ? pendingVibrationIndex : 0;
         int restoreFrame = pendingRestoreView ? pendingFrameIndex : 0;
@@ -718,14 +811,17 @@ public final class MainActivity extends Activity implements View.OnClickListener
             return;
         }
         StringBuilder text = new StringBuilder();
-        text.append("File: ").append(currentFileName.isEmpty() ? current.title : currentFileName)
-                .append(" | Type: ").append(current.sourceType)
-                .append(" | Source: ").append(currentSourceLabel).append('\n');
-        text.append("Atoms: ").append(current.atomCount())
-                .append(" | Bonds: ").append(current.bonds.size())
-                .append(" | Frames: ").append(current.frameCount());
+        text.append(compactText(currentFileName.isEmpty() ? current.title : currentFileName, 48))
+                .append(" | ").append(current.sourceType)
+                .append(" | ").append(currentSourceLabel).append('\n');
+        if (sessionOnlySource) {
+            text.append("Session-only | reopen if restore fails\n");
+        }
+        text.append("A").append(current.atomCount())
+                .append(" | B").append(current.bonds.size())
+                .append(" | F").append(current.frameCount());
         if (current.hasVibrations()) {
-            text.append(" | Modes: ").append(current.vibrationCount());
+            text.append(" | M").append(current.vibrationCount());
         }
         text.append('\n');
         if (current.hasVibrations()) {
@@ -778,17 +874,15 @@ public final class MainActivity extends Activity implements View.OnClickListener
             return;
         }
         if (currentSourceUri != null) {
-            SourceTextStore.setUri(sourceTitleText(), currentSourceUri.toString());
             Intent intent = new Intent(this, SourceActivity.class);
             intent.putExtra(SourceActivity.EXTRA_TITLE, sourceTitleText());
-            intent.putExtra(SourceActivity.EXTRA_KIND, SourceTextStore.KIND_URI);
+            intent.putExtra(SourceActivity.EXTRA_KIND, SourceKind.URI);
             intent.putExtra(SourceActivity.EXTRA_LOCATION, currentSourceUri.toString());
             startActivity(intent);
         } else {
-            SourceTextStore.setAsset(sourceTitleText(), currentAssetPath);
             Intent intent = new Intent(this, SourceActivity.class);
             intent.putExtra(SourceActivity.EXTRA_TITLE, sourceTitleText());
-            intent.putExtra(SourceActivity.EXTRA_KIND, SourceTextStore.KIND_ASSET);
+            intent.putExtra(SourceActivity.EXTRA_KIND, SourceKind.ASSET);
             intent.putExtra(SourceActivity.EXTRA_LOCATION, currentAssetPath);
             startActivity(intent);
         }
@@ -826,6 +920,8 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
         text.append("\nMetadata\n");
         text.append(current.infoText()).append("\n");
+        text.append("\nElements\n");
+        text.append(elementLegend()).append("\n");
         if (current.hasVibrations()) {
             text.append("\nSelected vibration\n");
             text.append(selectedVibrationInfo()).append("\n");
@@ -834,6 +930,20 @@ public final class MainActivity extends Activity implements View.OnClickListener
         text.append("Style: ").append(moleculeView.modeName()).append('\n');
         text.append(backgroundModeText()).append('\n');
         return text.toString();
+    }
+
+    private String elementLegend() {
+        if (current == null) {
+            return "";
+        }
+        StringBuilder text = new StringBuilder();
+        for (String element : current.elementsInUse()) {
+            if (text.length() > 0) {
+                text.append('\n');
+            }
+            text.append(element).append("  ").append(ElementTable.hexColor(element));
+        }
+        return text.length() == 0 ? "None" : text.toString();
     }
 
     private String vibrationStatusText() {
@@ -872,6 +982,17 @@ public final class MainActivity extends Activity implements View.OnClickListener
 
     private String backgroundModeText() {
         return lightBackground ? "BG: White" : "BG: Black";
+    }
+
+    private static String compactText(String value, int maxLength) {
+        if (value == null) {
+            return "";
+        }
+        String trimmed = value.trim();
+        if (trimmed.length() <= maxLength) {
+            return trimmed;
+        }
+        return trimmed.substring(0, Math.max(0, maxLength - 3)) + "...";
     }
 
     private void updateModeButton() {
@@ -961,11 +1082,20 @@ public final class MainActivity extends Activity implements View.OnClickListener
                 throw new IOException("Cannot open file");
             }
             return readAll(input);
+        } catch (SecurityException ex) {
+            if (sessionOnlySource) {
+                throw new IOException("Android no longer grants access to this session-only file. Reopen it from the folder button.", ex);
+            }
+            throw ex;
         }
     }
 
     private interface MoleculeLoader {
         LoadedMolecule load() throws IOException;
+
+        int kind();
+
+        String location();
     }
 
     private static final class LoadedMolecule {
@@ -974,6 +1104,41 @@ public final class MainActivity extends Activity implements View.OnClickListener
         LoadedMolecule(Molecule molecule) {
             this.molecule = molecule;
         }
+    }
+
+    private static String sourceKey(int kind, String location) {
+        return kind + ":" + (location == null ? "" : location);
+    }
+
+    private static void cacheMolecule(MoleculeLoader loader, LoadedMolecule loaded) {
+        lastLoadedKey = sourceKey(loader.kind(), loader.location());
+        lastLoadedMolecule = loaded;
+    }
+
+    private static LoadedMolecule cachedMolecule(MoleculeLoader loader) {
+        if (loader == null || lastLoadedMolecule == null) {
+            return null;
+        }
+        String key = sourceKey(loader.kind(), loader.location());
+        return key.equals(lastLoadedKey) ? lastLoadedMolecule : null;
+    }
+
+    private boolean displayCachedMolecule(String key, String sourceLabel, String fileName, MoleculeLoader loader) {
+        if (lastLoadedMolecule == null || !key.equals(lastLoadedKey)) {
+            return false;
+        }
+        displayMolecule(lastLoadedMolecule.molecule, sourceLabel, fileName, loader);
+        return true;
+    }
+
+    private static String loadErrorMessage(Throwable ex) {
+        if (ex == null) {
+            return "Load failed";
+        }
+        String message = ex.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? ex.getClass().getSimpleName()
+                : message;
     }
 
     private final class UriLoader implements MoleculeLoader {
@@ -990,6 +1155,16 @@ public final class MainActivity extends Activity implements View.OnClickListener
             String text = readUri(uri);
             return new LoadedMolecule(parseMoleculeFile(text, name));
         }
+
+        @Override
+        public int kind() {
+            return SourceKind.URI;
+        }
+
+        @Override
+        public String location() {
+            return uri.toString();
+        }
     }
 
     private final class AssetLoader implements MoleculeLoader {
@@ -1005,6 +1180,16 @@ public final class MainActivity extends Activity implements View.OnClickListener
                 String text = readAll(input);
                 return new LoadedMolecule(parseXyzFile(text, assetPath));
             }
+        }
+
+        @Override
+        public int kind() {
+            return SourceKind.ASSET;
+        }
+
+        @Override
+        public String location() {
+            return assetPath;
         }
     }
 
@@ -1045,26 +1230,6 @@ public final class MainActivity extends Activity implements View.OnClickListener
         return row;
     }
 
-    private Button button(String text) {
-        Button button = new Button(this);
-        button.setText(text);
-        button.setAllCaps(false);
-        button.setTextColor(buttonTextColors());
-        button.setTextSize(13);
-        button.setGravity(Gravity.CENTER);
-        button.setPadding(dp(8), 0, dp(8), 0);
-        button.setSingleLine(true);
-        button.setIncludeFontPadding(false);
-        button.setMinWidth(0);
-        button.setMinimumWidth(0);
-        button.setMinHeight(0);
-        button.setMinimumHeight(0);
-        button.setStateListAnimator(null);
-        button.setHapticFeedbackEnabled(true);
-        button.setBackground(buttonBackground());
-        return button;
-    }
-
     private ImageButton railButton(String description, int imageResId) {
         ImageButton button = new ImageButton(this);
         button.setImageResource(imageResId);
@@ -1076,6 +1241,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         button.setMinimumHeight(0);
         button.setHapticFeedbackEnabled(true);
         button.setContentDescription(description);
+        button.setTooltipText(description);
         return button;
     }
 

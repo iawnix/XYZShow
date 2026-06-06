@@ -69,7 +69,7 @@ public final class SourceActivity extends Activity {
     private boolean pageIndexStarted;
     private String sourceTitle = "";
     private String sourceLocation = "";
-    private int sourceKind = SourceTextStore.KIND_NONE;
+    private int sourceKind = SourceKind.NONE;
     private int totalLines = 1;
     private int page;
     private boolean pageCountKnown = true;
@@ -275,6 +275,7 @@ public final class SourceActivity extends Activity {
         button.setScaleType(ImageView.ScaleType.CENTER);
         button.setPadding(dp(10), dp(10), dp(10), dp(10));
         button.setContentDescription(description);
+        button.setTooltipText(description);
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
         return button;
@@ -567,14 +568,17 @@ public final class SourceActivity extends Activity {
         while (pageOffsets.size() > pages) {
             pageOffsets.remove(pageOffsets.size() - 1);
         }
+        while (pageOffsets.size() < pages) {
+            pageOffsets.add(position);
+        }
         return new PageIndex(total, pageOffsets);
     }
 
     private InputStream openInput() throws IOException {
         InputStream input;
-        if (sourceKind == SourceTextStore.KIND_URI) {
+        if (sourceKind == SourceKind.URI) {
             input = getContentResolver().openInputStream(Uri.parse(sourceLocation));
-        } else if (sourceKind == SourceTextStore.KIND_ASSET) {
+        } else if (sourceKind == SourceKind.ASSET) {
             input = getAssets().open(sourceLocation);
         } else {
             input = null;
@@ -645,22 +649,16 @@ public final class SourceActivity extends Activity {
     private int restoreSource(Bundle state) {
         if (state != null) {
             sourceTitle = state.getString(STATE_TITLE, "");
-            sourceKind = state.getInt(STATE_KIND, SourceTextStore.KIND_NONE);
+            sourceKind = state.getInt(STATE_KIND, SourceKind.NONE);
             sourceLocation = state.getString(STATE_LOCATION, "");
             return Math.max(0, state.getInt(STATE_PAGE, 0));
         }
         sourceTitle = getIntent().getStringExtra(EXTRA_TITLE);
         if (sourceTitle == null || sourceTitle.isEmpty()) {
-            sourceTitle = SourceTextStore.title();
+            sourceTitle = "Source";
         }
-        sourceKind = getIntent().getIntExtra(EXTRA_KIND, SourceTextStore.KIND_NONE);
+        sourceKind = getIntent().getIntExtra(EXTRA_KIND, SourceKind.NONE);
         sourceLocation = getIntent().getStringExtra(EXTRA_LOCATION);
-        if (sourceKind == SourceTextStore.KIND_NONE) {
-            sourceKind = SourceTextStore.kind();
-        }
-        if (sourceLocation == null || sourceLocation.isEmpty()) {
-            sourceLocation = SourceTextStore.location();
-        }
         return 0;
     }
 
@@ -697,7 +695,7 @@ public final class SourceActivity extends Activity {
 
         long pageOffset(int page) {
             if (page < 0 || page >= pageOffsets.size()) {
-                return 0L;
+                throw new IllegalArgumentException("Page offset missing for page " + (page + 1));
             }
             return pageOffsets.get(page);
         }

@@ -14,7 +14,20 @@ android {
         versionName "0.4.6"
     }
 
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests.returnDefaultValues = true
+    }
+
     lint {
         checkReleaseBuilds false
     }
+}
+
+dependencies {
+    testImplementation "junit:junit:4.13.2"
 }

@@ -2,15 +2,16 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/home/iaw/soft/android/sdk}}"
-GRADLE_BIN="${GRADLE_BIN:-/home/iaw/soft/gradle/gradle-8.9/bin/gradle}"
+TOOLCHAIN_ROOT="${LOCAL_TOOLCHAIN_ROOT:-$HOME/soft}"
+SDK_DIR="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$TOOLCHAIN_ROOT/android/sdk}}"
+GRADLE_BIN="${GRADLE_BIN:-$TOOLCHAIN_ROOT/gradle/gradle-8.9/bin/gradle}"
 BUILD_TOOLS="${BUILD_TOOLS:-$(find "$SDK_DIR/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -n 1)}"
 SIGNING_DIR="${SIGNING_DIR:-$ROOT_DIR/local-signing}"
 KEYSTORE="${KEYSTORE:-$SIGNING_DIR/xyzshow-release.jks}"
 SIGNING_ENV="${SIGNING_ENV:-$SIGNING_DIR/release.env}"
 KEY_ALIAS="${KEY_ALIAS:-xyzshow-release}"
 
-export JAVA_HOME="${JAVA_HOME:-/home/iaw/soft/jdk21-local/usr/lib/jvm/java-21-openjdk-amd64}"
+export JAVA_HOME="${JAVA_HOME:-$TOOLCHAIN_ROOT/jdk21-local/usr/lib/jvm/java-21-openjdk-amd64}"
 export ANDROID_HOME="$SDK_DIR"
 export ANDROID_SDK_ROOT="$SDK_DIR"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$ROOT_DIR/.gradle-home}"

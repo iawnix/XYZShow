@@ -6,7 +6,6 @@ import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -24,7 +23,7 @@ final class MoleculeParser {
         if (looksLikeInteger(first)) {
             return parseXyzOnly(text, sourceName);
         }
-        return parsePdb(text, sourceName);
+        throw new IOException("Only XYZ and Gaussian out/log files are supported");
     }
 
     static boolean looksLikeGaussianOutput(String text, String sourceName) {
@@ -95,7 +94,7 @@ final class MoleculeParser {
         List<String> infoLines = new ArrayList<>();
         infoLines.add("XYZ title: " + title);
         infoLines.add(atoms.size() + " atoms | " + bonds.size() + " bonds | " + frames.size() + " frame" + (frames.size() == 1 ? "" : "s"));
-        return new Molecule(title, "XYZ", atoms, frames, bonds, Molecule.emptyBonds(), new ArrayList<Molecule.VibrationMode>(), infoLines);
+        return new Molecule(title, "XYZ", atoms, frames, bonds, new ArrayList<Molecule.VibrationMode>(), infoLines);
     }
 
     static Molecule parseGaussianOutput(String text, String sourceName) throws IOException {
@@ -123,12 +122,14 @@ final class MoleculeParser {
 
         List<Molecule.Frame> frames = new ArrayList<>();
         frames.add(new Molecule.Frame(geometry.xyz));
-        List<Molecule.VibrationMode> vibrations = parseGaussianFrequencies(lines, geometry.atoms.size());
+        List<String> warnings = new ArrayList<>();
+        List<Molecule.VibrationMode> vibrations = parseGaussianFrequencies(lines, geometry.atoms.size(), warnings);
         List<Molecule.Bond> bonds = buildAutoBonds(geometry.atoms, frames.get(0));
         GaussianInfo info = parseGaussianInfo(lines, vibrations);
         List<String> infoLines = buildGaussianInfoLines(info, geometry, bonds, vibrations);
+        infoLines.addAll(warnings);
         String title = sourceName == null || sourceName.trim().isEmpty() ? "Gaussian output" : sourceName;
-        return new Molecule(title, "Gaussian", geometry.atoms, frames, bonds, Molecule.emptyBonds(), vibrations, infoLines);
+        return new Molecule(title, "Gaussian", geometry.atoms, frames, bonds, vibrations, infoLines);
     }
 
     private static GaussianInfo parseGaussianInfo(List<String> lines, List<Molecule.VibrationMode> vibrations) {
@@ -332,7 +333,11 @@ final class MoleculeParser {
         return line != null && line.trim().startsWith("----");
     }
 
-    private static List<Molecule.VibrationMode> parseGaussianFrequencies(List<String> lines, int atomCount) throws IOException {
+    private static List<Molecule.VibrationMode> parseGaussianFrequencies(
+            List<String> lines,
+            int atomCount,
+            List<String> warnings
+    ) throws IOException {
         List<Molecule.VibrationMode> modes = new ArrayList<>();
         for (int i = 0; i < lines.size(); i++) {
             String line = lines.get(i);
@@ -391,8 +396,19 @@ final class MoleculeParser {
                     j++;
                 }
                 if (rows != atomCount) {
+                    int firstMode = modes.size() + 1;
+                    int lastMode = firstMode + modeCount - 1;
+                    warnings.add("Warning: Gaussian displacement block incomplete for modes "
+                            + firstMode + "-" + lastMode + " (" + rows + "/" + atomCount
+                            + " rows parsed); animation disabled for these modes.");
                     displacements = new float[modeCount][atomCount * 3];
                 }
+            } else {
+                int firstMode = modes.size() + 1;
+                int lastMode = firstMode + modeCount - 1;
+                warnings.add("Warning: Gaussian displacement block missing for modes "
+                        + firstMode + "-" + lastMode
+                        + "; animation disabled for these modes.");
             }
 
             for (int mode = 0; mode < modeCount; mode++) {
@@ -438,141 +454,6 @@ final class MoleculeParser {
             values[i] = parseFloat(parts[i], "gaussian frequency value");
         }
         return values;
-    }
-
-    private static Molecule parsePdb(String text, String sourceName) throws IOException {
-        BufferedReader reader = new BufferedReader(new StringReader(text));
-        List<Molecule.Atom> atoms = new ArrayList<>();
-        List<Molecule.Frame> frames = new ArrayList<>();
-        List<Molecule.Bond> conectBonds = new ArrayList<>();
-        List<int[]> conectRows = new ArrayList<>();
-        Map<Integer, Integer> serialToIndex = new HashMap<>();
-        List<Molecule.Atom> currentAtoms = new ArrayList<>();
-        List<Float> currentCoords = new ArrayList<>();
-        String title = sourceName;
-        String line;
-        boolean sawModel = false;
-
-        while ((line = reader.readLine()) != null) {
-            if (line.startsWith("TITLE")) {
-                String part = safeSubstring(line, 10, line.length()).trim();
-                if (!part.isEmpty()) {
-                    title = part;
-                }
-            } else if (line.startsWith("MODEL")) {
-                if (!currentAtoms.isEmpty()) {
-                    finishPdbFrame(currentAtoms, currentCoords, atoms, frames, serialToIndex);
-                    currentAtoms.clear();
-                    currentCoords.clear();
-                }
-                sawModel = true;
-            } else if (line.startsWith("ATOM") || line.startsWith("HETATM")) {
-                PdbAtom parsed = parsePdbAtom(line);
-                currentAtoms.add(parsed.atom);
-                currentCoords.add(parsed.x);
-                currentCoords.add(parsed.y);
-                currentCoords.add(parsed.z);
-            } else if (line.startsWith("ENDMDL")) {
-                finishPdbFrame(currentAtoms, currentCoords, atoms, frames, serialToIndex);
-                currentAtoms.clear();
-                currentCoords.clear();
-            } else if (line.startsWith("CONECT")) {
-                conectRows.add(parseConect(line));
-            }
-        }
-        if (!currentAtoms.isEmpty()) {
-            finishPdbFrame(currentAtoms, currentCoords, atoms, frames, serialToIndex);
-        }
-        if (!sawModel && frames.size() > 1) {
-            throw new IOException("PDB contained multiple atom blocks without MODEL records");
-        }
-        if (frames.isEmpty()) {
-            throw new IOException("No PDB ATOM/HETATM records found");
-        }
-        resolveConect(conectRows, serialToIndex, conectBonds);
-        List<Molecule.Bond> bonds = conectBonds.isEmpty() ? buildAutoBonds(atoms, frames.get(0)) : conectBonds;
-        List<Molecule.Bond> traceBonds = buildTraceBonds(atoms);
-        return new Molecule(title, "PDB", atoms, frames, bonds, traceBonds);
-    }
-
-    private static void finishPdbFrame(
-            List<Molecule.Atom> currentAtoms,
-            List<Float> currentCoords,
-            List<Molecule.Atom> atoms,
-            List<Molecule.Frame> frames,
-            Map<Integer, Integer> serialToIndex
-    ) throws IOException {
-        if (currentAtoms.isEmpty()) {
-            return;
-        }
-        if (atoms.isEmpty()) {
-            atoms.addAll(currentAtoms);
-            for (int i = 0; i < atoms.size(); i++) {
-                serialToIndex.put(atoms.get(i).serial, i);
-            }
-        } else if (currentAtoms.size() != atoms.size()) {
-            throw new IOException("PDB MODEL atom count changed");
-        }
-        float[] xyz = new float[currentCoords.size()];
-        for (int i = 0; i < currentCoords.size(); i++) {
-            xyz[i] = currentCoords.get(i);
-        }
-        frames.add(new Molecule.Frame(xyz));
-    }
-
-    private static PdbAtom parsePdbAtom(String line) throws IOException {
-        int serial = parseIntSafe(safeSubstring(line, 6, 11).trim(), 0);
-        String atomName = safeSubstring(line, 12, 16);
-        String residueName = safeSubstring(line, 17, 20).trim();
-        String chain = safeSubstring(line, 21, 22).trim();
-        int residueSeq = parseIntSafe(safeSubstring(line, 22, 26).trim(), 0);
-        float x = parseFloat(safeSubstring(line, 30, 38).trim(), "pdb x");
-        float y = parseFloat(safeSubstring(line, 38, 46).trim(), "pdb y");
-        float z = parseFloat(safeSubstring(line, 46, 54).trim(), "pdb z");
-        String elementColumn = safeSubstring(line, 76, 78).trim();
-        String element = ElementTable.inferPdbElement(atomName, elementColumn);
-        Molecule.Atom atom = new Molecule.Atom(element, atomName, residueName, chain, residueSeq, serial);
-        return new PdbAtom(atom, x, y, z);
-    }
-
-    private static int[] parseConect(String line) {
-        String rest = safeSubstring(line, 6, line.length()).trim();
-        if (rest.isEmpty()) {
-            return new int[0];
-        }
-        String[] parts = rest.split("\\s+");
-        int[] serials = new int[parts.length];
-        for (int i = 0; i < parts.length; i++) {
-            serials[i] = parseIntSafe(parts[i], -1);
-        }
-        return serials;
-    }
-
-    private static void resolveConect(
-            List<int[]> rows,
-            Map<Integer, Integer> serialToIndex,
-            List<Molecule.Bond> output
-    ) {
-        Set<Long> seen = new HashSet<>();
-        for (int[] row : rows) {
-            if (row.length < 2) {
-                continue;
-            }
-            Integer from = serialToIndex.get(row[0]);
-            if (from == null) {
-                continue;
-            }
-            for (int i = 1; i < row.length; i++) {
-                Integer to = serialToIndex.get(row[i]);
-                if (to == null || to.equals(from)) {
-                    continue;
-                }
-                Molecule.Bond bond = new Molecule.Bond(from, to);
-                if (seen.add(bond.key())) {
-                    output.add(bond);
-                }
-            }
-        }
     }
 
     private static List<Molecule.Bond> buildAutoBonds(List<Molecule.Atom> atoms, Molecule.Frame frame) {
@@ -638,46 +519,6 @@ final class MoleculeParser {
         return dist2 > min * min && dist2 <= max * max;
     }
 
-    private static List<Molecule.Bond> buildTraceBonds(List<Molecule.Atom> atoms) {
-        LinkedHashMap<String, TracePick> residues = new LinkedHashMap<>();
-        for (int i = 0; i < atoms.size(); i++) {
-            Molecule.Atom atom = atoms.get(i);
-            int priority = tracePriority(atom.name);
-            if (priority == 0) {
-                continue;
-            }
-            String chain = atom.chainId.isEmpty() ? "_" : atom.chainId;
-            String key = chain + ":" + atom.residueSeq + ":" + atom.residueName;
-            TracePick current = residues.get(key);
-            if (current == null || priority < current.priority) {
-                residues.put(key, new TracePick(chain, atom.residueSeq, i, priority));
-            }
-        }
-        List<Molecule.Bond> trace = new ArrayList<>();
-        TracePick previous = null;
-        for (TracePick pick : residues.values()) {
-            if (previous != null && previous.chain.equals(pick.chain)) {
-                trace.add(new Molecule.Bond(previous.atomIndex, pick.atomIndex));
-            }
-            previous = pick;
-        }
-        return trace;
-    }
-
-    private static int tracePriority(String atomName) {
-        String name = atomName == null ? "" : atomName.trim().toUpperCase(Locale.US);
-        if ("CA".equals(name) || "P".equals(name)) {
-            return 1;
-        }
-        if ("C4'".equals(name) || "C4*".equals(name)) {
-            return 2;
-        }
-        if ("C3'".equals(name) || "C3*".equals(name)) {
-            return 3;
-        }
-        return 0;
-    }
-
     private static String firstMeaningfulLine(String text) throws IOException {
         BufferedReader reader = new BufferedReader(new StringReader(text));
         String line;
@@ -727,15 +568,6 @@ final class MoleculeParser {
         }
     }
 
-    private static String safeSubstring(String value, int start, int end) {
-        if (value == null || start >= value.length()) {
-            return "";
-        }
-        int safeStart = Math.max(0, start);
-        int safeEnd = Math.min(value.length(), Math.max(safeStart, end));
-        return value.substring(safeStart, safeEnd);
-    }
-
     private static String compact(String value, int maxLength) {
         if (value == null) {
             return "";
@@ -759,20 +591,6 @@ final class MoleculeParser {
         return x + ":" + y + ":" + z;
     }
 
-    private static final class PdbAtom {
-        final Molecule.Atom atom;
-        final float x;
-        final float y;
-        final float z;
-
-        PdbAtom(Molecule.Atom atom, float x, float y, float z) {
-            this.atom = atom;
-            this.x = x;
-            this.y = y;
-            this.z = z;
-        }
-    }
-
     private static final class OrientationBlock {
         final List<Molecule.Atom> atoms;
         final float[] xyz;
@@ -794,19 +612,5 @@ final class MoleculeParser {
         int frequencyCount;
         int imaginaryCount;
         float lowestFrequency = Float.NaN;
-    }
-
-    private static final class TracePick {
-        final String chain;
-        final int residueSeq;
-        final int atomIndex;
-        final int priority;
-
-        TracePick(String chain, int residueSeq, int atomIndex, int priority) {
-            this.chain = chain;
-            this.residueSeq = residueSeq;
-            this.atomIndex = atomIndex;
-            this.priority = priority;
-        }
     }
 }

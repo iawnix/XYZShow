@@ -82,12 +82,19 @@ final class MoleculeView extends GLSurfaceView {
         this.zoom = fitZoom;
         this.panX = 0f;
         this.panY = 0f;
+        final Molecule queuedMolecule = this.molecule;
+        final int queuedVibrationIndex = this.vibrationIndex;
+        final float queuedVibrationPhase = this.vibrationPhase;
+        final float[] queuedOrientation = snapshotOrientation();
+        final float queuedZoom = this.zoom;
+        final float queuedPanX = this.panX;
+        final float queuedPanY = this.panY;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setMolecule(MoleculeView.this.molecule);
-                renderer.setVibration(MoleculeView.this.vibrationIndex, MoleculeView.this.vibrationPhase);
-                renderer.setViewState(snapshotOrientation(), zoom, panX, panY);
+                renderer.setMolecule(queuedMolecule);
+                renderer.setVibration(queuedVibrationIndex, queuedVibrationPhase);
+                renderer.setViewState(queuedOrientation, queuedZoom, queuedPanX, queuedPanY);
             }
         });
         requestRender();
@@ -99,10 +106,12 @@ final class MoleculeView extends GLSurfaceView {
         } else {
             this.vibrationIndex = Math.max(0, Math.min(vibrationIndex, molecule.vibrationCount() - 1));
         }
+        final int queuedVibrationIndex = this.vibrationIndex;
+        final float queuedVibrationPhase = this.vibrationPhase;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setVibration(MoleculeView.this.vibrationIndex, MoleculeView.this.vibrationPhase);
+                renderer.setVibration(queuedVibrationIndex, queuedVibrationPhase);
             }
         });
         requestRender();
@@ -110,10 +119,12 @@ final class MoleculeView extends GLSurfaceView {
 
     void setVibrationPhase(float vibrationPhase) {
         this.vibrationPhase = vibrationPhase;
+        final int queuedVibrationIndex = this.vibrationIndex;
+        final float queuedVibrationPhase = this.vibrationPhase;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setVibration(MoleculeView.this.vibrationIndex, MoleculeView.this.vibrationPhase);
+                renderer.setVibration(queuedVibrationIndex, queuedVibrationPhase);
             }
         });
         requestRender();
@@ -121,10 +132,11 @@ final class MoleculeView extends GLSurfaceView {
 
     void setVibrationAmplitude(float vibrationAmplitude) {
         this.vibrationAmplitude = clamp(vibrationAmplitude, 0f, 2.5f);
+        final float queuedAmplitude = this.vibrationAmplitude;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setVibrationAmplitude(MoleculeView.this.vibrationAmplitude);
+                renderer.setVibrationAmplitude(queuedAmplitude);
             }
         });
         requestRender();
@@ -136,10 +148,11 @@ final class MoleculeView extends GLSurfaceView {
         } else {
             this.frameIndex = Math.max(0, Math.min(frameIndex, molecule.frameCount() - 1));
         }
+        final int queuedFrameIndex = this.frameIndex;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setFrameIndex(MoleculeView.this.frameIndex);
+                renderer.setFrameIndex(queuedFrameIndex);
             }
         });
         requestRender();
@@ -155,10 +168,11 @@ final class MoleculeView extends GLSurfaceView {
 
     void setDisplayMode(final int displayMode) {
         mode = displayMode == MODE_STICKS ? MODE_STICKS : MODE_SPACE;
+        final int queuedMode = mode;
         queueEvent(new Runnable() {
             @Override
             public void run() {
-                renderer.setMode(mode);
+                renderer.setMode(queuedMode);
             }
         });
         requestRender();

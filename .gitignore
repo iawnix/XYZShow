@@ -31,3 +31,7 @@ externalNativeBuild/
 # Local release signing material. Keep this private and out of published source.
 local-signing/
 *.env
+
+# Release artifacts — built locally by build_release_apk.sh, not source-of-truth.
+releases/*.apk
+releases/*.idsig

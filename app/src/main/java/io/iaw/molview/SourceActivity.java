@@ -1,25 +1,29 @@
 package io.iaw.molview;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.content.DialogInterface;
 import android.content.res.ColorStateList;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.text.TextUtils;
 import android.view.Gravity;
 import android.view.View;
+import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.widget.FrameLayout;
-import android.widget.HorizontalScrollView;
-import android.widget.ImageButton;
-import android.widget.ImageView;
+import android.widget.BaseAdapter;
+import android.widget.EditText;
 import android.widget.LinearLayout;
+import android.widget.ListView;
 import android.widget.ProgressBar;
-import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.core.graphics.Insets;
+import androidx.core.view.WindowInsetsCompat;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -35,31 +39,33 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import com.google.android.material.button.MaterialButton;
+
 public final class SourceActivity extends Activity {
     static final String EXTRA_TITLE = "io.iaw.molview.extra.SOURCE_TITLE";
     static final String EXTRA_KIND = "io.iaw.molview.extra.SOURCE_KIND";
     static final String EXTRA_LOCATION = "io.iaw.molview.extra.SOURCE_LOCATION";
 
-    private static final int PAGE_LINES = 400;
+    private static final int PAGE_LINES = 160;
     private static final String STATE_TITLE = "source_title";
     private static final String STATE_KIND = "source_kind";
     private static final String STATE_LOCATION = "source_location";
     private static final String STATE_PAGE = "source_page";
 
-    private LinearLayout root;
+    private ConstraintLayout root;
     private LinearLayout header;
     private LinearLayout pagerHost;
     private LinearLayout pagerBar;
     private TextView titleView;
     private TextView pagerView;
-    private TextView gutterView;
-    private TextView sourceView;
-    private ImageButton firstButton;
-    private ImageButton prevButton;
-    private ImageButton nextButton;
-    private ImageButton lastButton;
+    private ListView sourceList;
+    private SourceLineAdapter sourceAdapter;
+    private MaterialButton firstButton;
+    private MaterialButton prevButton;
+    private MaterialButton nextButton;
+    private MaterialButton lastButton;
+    private MaterialButton searchButton;
     private ProgressBar loadingView;
-    private ScrollView vertical;
     private final ExecutorService sourceExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService indexExecutor = Executors.newSingleThreadExecutor();
     private final List<String> currentPageLines = new ArrayList<>();
@@ -76,10 +82,12 @@ public final class SourceActivity extends Activity {
     private boolean pageHasMore;
     private boolean destroyed;
     private boolean light;
+    private int pendingFocusLine = -1;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        AppTheme.bind(this);
         light = AppTheme.isLight(this);
         AppTheme.applySystemBars(this, light);
         int initialPage = restoreSource(savedInstanceState);
@@ -107,194 +115,108 @@ public final class SourceActivity extends Activity {
     }
 
     private void buildLayout() {
-        root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        setContentView(R.layout.activity_source);
+        root = findViewById(R.id.source_root);
+        header = findViewById(R.id.source_header);
+        pagerHost = findViewById(R.id.source_pager_host);
+        pagerBar = findViewById(R.id.source_pager_bar);
+        titleView = findViewById(R.id.source_title);
+        pagerView = findViewById(R.id.source_pager);
+        firstButton = findViewById(R.id.source_first);
+        prevButton = findViewById(R.id.source_prev);
+        nextButton = findViewById(R.id.source_next);
+        searchButton = findViewById(R.id.source_search);
+        lastButton = findViewById(R.id.source_last);
+        sourceList = findViewById(R.id.source_list);
+        loadingView = findViewById(R.id.source_loading);
+        MaterialButton closeButton = findViewById(R.id.source_close);
+
         root.setBackgroundColor(AppTheme.bg(light));
-
-        header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(14), dp(10), dp(14), dp(8));
         header.setBackgroundColor(AppTheme.panel(light));
-
-        titleView = new TextView(this);
+        pagerHost.setBackgroundColor(AppTheme.bg(light));
+        pagerBar.setBackground(round(AppTheme.panel(light), dp(12)));
         titleView.setTextColor(AppTheme.text(light));
-        titleView.setTextSize(16);
         titleView.setTypeface(Typeface.DEFAULT_BOLD);
-        titleView.setSingleLine(true);
         titleView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-        titleView.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout.LayoutParams titleParams = new LinearLayout.LayoutParams(0, dp(44), 1f);
-        titleParams.setMarginEnd(dp(12));
-        header.addView(titleView, titleParams);
-
-        ImageButton closeButton = iconButton("Close", R.drawable.ic_close);
+        configureIconButton(closeButton, "Close", R.drawable.ic_close);
         closeButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 finish();
             }
         });
-        header.addView(closeButton, iconLayout(false));
 
-        pagerHost = new LinearLayout(this);
-        pagerHost.setOrientation(LinearLayout.VERTICAL);
-        pagerHost.setPadding(dp(12), dp(10), dp(12), dp(10));
-        pagerHost.setBackgroundColor(AppTheme.bg(light));
-
-        pagerBar = new LinearLayout(this);
-        pagerBar.setOrientation(LinearLayout.HORIZONTAL);
-        pagerBar.setGravity(Gravity.CENTER_VERTICAL);
-        pagerBar.setPadding(dp(8), dp(8), dp(10), dp(8));
-        pagerBar.setBackground(round(AppTheme.panel(light), dp(12)));
-
-        firstButton = iconButton("第一页", R.drawable.ic_page_first);
+        configureIconButton(firstButton, "第一页", R.drawable.ic_page_first);
         firstButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 renderPage(0);
             }
         });
-        pagerBar.addView(firstButton, iconLayout(true));
 
-        prevButton = iconButton("上一页", R.drawable.ic_page_prev);
+        configureIconButton(prevButton, "上一页", R.drawable.ic_page_prev);
         prevButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 renderPage(page - 1);
             }
         });
-        pagerBar.addView(prevButton, iconLayout(true));
 
-        pagerView = new TextView(this);
         pagerView.setTextColor(AppTheme.text(light));
-        pagerView.setTextSize(13);
         pagerView.setTypeface(Typeface.DEFAULT_BOLD);
-        pagerView.setGravity(Gravity.CENTER);
-        pagerView.setSingleLine(true);
         pagerView.setEllipsize(TextUtils.TruncateAt.END);
-        pagerBar.addView(pagerView, new LinearLayout.LayoutParams(0, dp(42), 1f));
 
-        nextButton = iconButton("下一页", R.drawable.ic_page_next);
+        configureIconButton(nextButton, "下一页", R.drawable.ic_page_next);
         nextButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 renderPage(page + 1);
             }
         });
-        pagerBar.addView(nextButton, iconLayout(true));
 
-        lastButton = iconButton("最后一页", R.drawable.ic_page_last);
+        configureIconButton(searchButton, "搜索或跳行", R.drawable.ic_search);
+        searchButton.setOnClickListener(new View.OnClickListener() {
+            @Override
+            public void onClick(View view) {
+                showSearchDialog();
+            }
+        });
+
+        configureIconButton(lastButton, "最后一页", R.drawable.ic_page_last);
         lastButton.setOnClickListener(new View.OnClickListener() {
             @Override
             public void onClick(View view) {
                 renderPage(pageCount() - 1);
             }
         });
-        pagerBar.addView(lastButton, iconLayout(false));
-        pagerHost.addView(pagerBar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
 
-        vertical = new ScrollView(this);
-        HorizontalScrollView horizontal = new HorizontalScrollView(this);
-        LinearLayout editor = new LinearLayout(this);
-        editor.setOrientation(LinearLayout.HORIZONTAL);
-        editor.setPadding(0, dp(10), dp(16), dp(24));
-
-        gutterView = new TextView(this);
-        gutterView.setTextColor(AppTheme.gutter(light));
-        gutterView.setBackgroundColor(gutterBg());
-        gutterView.setTextSize(12);
-        gutterView.setGravity(Gravity.TOP | Gravity.END);
-        gutterView.setTypeface(Typeface.MONOSPACE);
-        gutterView.setIncludeFontPadding(false);
-        gutterView.setLineSpacing(0f, 1.08f);
-        gutterView.setSingleLine(false);
-        gutterView.setHorizontallyScrolling(true);
-        gutterView.setPadding(dp(8), 0, dp(8), 0);
-        editor.addView(gutterView, new LinearLayout.LayoutParams(dp(68), LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        View gutterDivider = new View(this);
-        gutterDivider.setBackgroundColor(AppTheme.border(light));
-        editor.addView(gutterDivider, new LinearLayout.LayoutParams(dp(1), LinearLayout.LayoutParams.MATCH_PARENT));
-
-        sourceView = new TextView(this);
-        sourceView.setTextColor(AppTheme.secondary(light));
-        sourceView.setTextSize(12);
-        sourceView.setTypeface(Typeface.MONOSPACE);
-        sourceView.setTextIsSelectable(true);
-        sourceView.setIncludeFontPadding(false);
-        sourceView.setLineSpacing(0f, 1.08f);
-        sourceView.setSingleLine(false);
-        sourceView.setHorizontallyScrolling(true);
-        sourceView.setPadding(dp(12), 0, 0, 0);
-        editor.addView(sourceView, new LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT));
-
-        horizontal.addView(editor, new HorizontalScrollView.LayoutParams(
-                HorizontalScrollView.LayoutParams.WRAP_CONTENT,
-                HorizontalScrollView.LayoutParams.WRAP_CONTENT
-        ));
-        vertical.addView(horizontal, new ScrollView.LayoutParams(
-                ScrollView.LayoutParams.WRAP_CONTENT,
-                ScrollView.LayoutParams.WRAP_CONTENT
-        ));
-        FrameLayout sourceHost = new FrameLayout(this);
-        sourceHost.addView(vertical, new FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-        ));
-        loadingView = new ProgressBar(this);
-        loadingView.setIndeterminate(true);
-        loadingView.setVisibility(View.GONE);
-        sourceHost.addView(loadingView, new FrameLayout.LayoutParams(dp(42), dp(42), Gravity.CENTER));
-
+        sourceList.setDivider(null);
+        sourceList.setCacheColorHint(0x00000000);
+        sourceList.setFastScrollEnabled(true);
+        sourceList.setBackgroundColor(AppTheme.bg(light));
+        sourceAdapter = new SourceLineAdapter();
+        sourceList.setAdapter(sourceAdapter);
         applyInsets();
-        root.addView(header, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
-        root.addView(pagerHost, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
-        root.addView(sourceHost, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-        ));
-        setContentView(root);
     }
 
-    private ImageButton iconButton(String description, int imageResId) {
-        ImageButton button = new ImageButton(this);
-        button.setImageResource(imageResId);
-        button.setImageTintList(iconTint());
-        button.setBackground(buttonBackground());
-        button.setScaleType(ImageView.ScaleType.CENTER);
-        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+    private void configureIconButton(MaterialButton button, String description, int imageResId) {
+        button.setIconResource(imageResId);
+        button.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_TOP);
+        button.setIconPadding(0);
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setPadding(0, 0, 0, 0);
         button.setContentDescription(description);
         button.setTooltipText(description);
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
-        return button;
-    }
-
-    private LinearLayout.LayoutParams iconLayout(boolean withMargin) {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(42), dp(42));
-        if (withMargin) {
-            params.setMarginEnd(dp(8));
-        }
-        return params;
-    }
-
-    private StateListDrawable buttonBackground() {
-        StateListDrawable states = new StateListDrawable();
-        states.addState(new int[]{-android.R.attr.state_enabled}, round(light ? 0xffededf0 : 0xff252527));
-        states.addState(new int[]{android.R.attr.state_pressed}, round(AppTheme.ACCENT));
-        states.addState(new int[]{}, round(AppTheme.button(light)));
-        return states;
+        button.setTextColor(iconTint());
+        button.setIconTint(iconTint());
+        button.setBackgroundTintList(ColorStateList.valueOf(AppTheme.button(light)));
+        button.setStrokeColor(ColorStateList.valueOf(AppTheme.border(light)));
+        button.setStrokeWidth(dp(1));
+        button.setCornerRadius(dp(20));
+        button.setRippleColor(ColorStateList.valueOf(AppTheme.accent(this)));
     }
 
     private GradientDrawable round(int color) {
@@ -323,6 +245,11 @@ public final class SourceActivity extends Activity {
     }
 
     private void renderPage(int targetPage) {
+        renderPage(targetPage, -1);
+    }
+
+    private void renderPage(int targetPage, int focusLine) {
+        pendingFocusLine = focusLine;
         setLoading(true);
         final int generation = renderGeneration.incrementAndGet();
         final int requestedPage = Math.max(0, targetPage);
@@ -357,7 +284,7 @@ public final class SourceActivity extends Activity {
                                 return;
                             }
                             setLoading(false);
-                            Toast.makeText(SourceActivity.this, ex.getMessage(), Toast.LENGTH_LONG).show();
+                            Toast.makeText(SourceActivity.this, errorMessage(ex), Toast.LENGTH_LONG).show();
                         }
                     });
                 }
@@ -376,23 +303,19 @@ public final class SourceActivity extends Activity {
         }
         currentPageLines.clear();
         currentPageLines.addAll(data.lines);
-        StringBuilder gutter = new StringBuilder();
-        StringBuilder source = new StringBuilder();
-        for (int i = 0; i < currentPageLines.size(); i++) {
-            if (i > 0) {
-                gutter.append('\n');
-                source.append('\n');
-            }
-            gutter.append(data.startLine + i);
-            source.append(currentPageLines.get(i));
-        }
-        gutterView.setText(gutter.toString());
-        sourceView.setText(source.toString());
+        sourceAdapter.setPage(data.startLine, currentPageLines);
         updatePagerControls();
-        vertical.post(new Runnable() {
+        sourceList.post(new Runnable() {
             @Override
             public void run() {
-                vertical.scrollTo(0, 0);
+                if (pendingFocusLine >= data.startLine
+                        && pendingFocusLine < data.startLine + currentPageLines.size()) {
+                    int lineOffset = pendingFocusLine - data.startLine;
+                    sourceList.setSelection(Math.max(0, lineOffset));
+                    pendingFocusLine = -1;
+                } else {
+                    sourceList.setSelection(0);
+                }
             }
         });
     }
@@ -409,6 +332,113 @@ public final class SourceActivity extends Activity {
         prevButton.setEnabled(page > 0);
         nextButton.setEnabled(pageCountKnown ? page + 1 < pageCount() : pageHasMore);
         lastButton.setEnabled(pageCountKnown && page + 1 < pageCount());
+        searchButton.setEnabled(!loadingView.isShown());
+    }
+
+    private void showSearchDialog() {
+        final EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setHint("line number or text");
+        input.setSelectAllOnFocus(true);
+        input.setTextColor(AppTheme.text(light));
+        input.setHintTextColor(AppTheme.gutter(light));
+        input.setTextSize(15);
+        int padding = dp(18);
+        input.setPadding(padding, dp(12), padding, dp(12));
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle("Find")
+                .setView(input)
+                .setNegativeButton("Cancel", null)
+                .setPositiveButton("Go", null)
+                .create();
+        dialog.setOnShowListener(new DialogInterface.OnShowListener() {
+            @Override
+            public void onShow(DialogInterface dialogInterface) {
+                dialog.getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener(new View.OnClickListener() {
+                    @Override
+                    public void onClick(View view) {
+                        String query = input.getText().toString().trim();
+                        if (query.isEmpty()) {
+                            return;
+                        }
+                        dialog.dismiss();
+                        if (query.matches("\\d+")) {
+                            jumpToLine(Math.max(1, parseLineNumber(query)));
+                        } else {
+                            findText(query);
+                        }
+                    }
+                });
+            }
+        });
+        dialog.show();
+    }
+
+    private int parseLineNumber(String text) {
+        try {
+            return Integer.parseInt(text);
+        } catch (NumberFormatException ex) {
+            return 1;
+        }
+    }
+
+    private void jumpToLine(int lineNumber) {
+        ensurePageIndexStarted();
+        int targetPage = (Math.max(1, lineNumber) - 1) / PAGE_LINES;
+        renderPage(targetPage, lineNumber);
+    }
+
+    private void findText(final String query) {
+        setLoading(true);
+        final int generation = renderGeneration.incrementAndGet();
+        sourceExecutor.execute(new Runnable() {
+            @Override
+            public void run() {
+                try {
+                    final int line = firstMatchingLine(query);
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (generation != renderGeneration.get()) {
+                                return;
+                            }
+                            setLoading(false);
+                            if (line <= 0) {
+                                Toast.makeText(SourceActivity.this, "No match", Toast.LENGTH_SHORT).show();
+                                return;
+                            }
+                            renderPage((line - 1) / PAGE_LINES, line);
+                        }
+                    });
+                } catch (final IOException | RuntimeException ex) {
+                    runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            if (generation != renderGeneration.get()) {
+                                return;
+                            }
+                            setLoading(false);
+                            Toast.makeText(SourceActivity.this, errorMessage(ex), Toast.LENGTH_LONG).show();
+                        }
+                    });
+                }
+            }
+        });
+    }
+
+    private int firstMatchingLine(String query) throws IOException {
+        String needle = query.toLowerCase(Locale.US);
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(openInput(), StandardCharsets.UTF_8), 8192)) {
+            String line;
+            int lineNumber = 1;
+            while ((line = reader.readLine()) != null) {
+                if (line.toLowerCase(Locale.US).contains(needle)) {
+                    return lineNumber;
+                }
+                lineNumber++;
+            }
+        }
+        return -1;
     }
 
     private int pageCount() {
@@ -604,6 +634,16 @@ public final class SourceActivity extends Activity {
         }
     }
 
+    private static String errorMessage(Throwable ex) {
+        if (ex == null) {
+            return "Source read failed";
+        }
+        String message = ex.getMessage();
+        return message == null || message.trim().isEmpty()
+                ? ex.getClass().getSimpleName()
+                : message;
+    }
+
     private void setLoading(boolean loading) {
         loadingView.setVisibility(loading ? View.VISIBLE : View.GONE);
         if (loading) {
@@ -611,6 +651,7 @@ public final class SourceActivity extends Activity {
             prevButton.setEnabled(false);
             nextButton.setEnabled(false);
             lastButton.setEnabled(false);
+            searchButton.setEnabled(false);
         } else {
             updatePagerControls();
         }
@@ -620,18 +661,17 @@ public final class SourceActivity extends Activity {
         root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
             @Override
             public WindowInsets onApplyWindowInsets(View view, WindowInsets insets) {
-                header.setPadding(dp(14) + insets.getSystemWindowInsetLeft(),
-                        dp(10) + insets.getSystemWindowInsetTop(),
-                        dp(14) + insets.getSystemWindowInsetRight(),
+                WindowInsetsCompat compatInsets = WindowInsetsCompat.toWindowInsetsCompat(insets, view);
+                Insets bars = compatInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+                header.setPadding(dp(14) + bars.left,
+                        dp(10) + bars.top,
+                        dp(14) + bars.right,
                         dp(8));
-                pagerHost.setPadding(dp(12) + insets.getSystemWindowInsetLeft(),
+                pagerHost.setPadding(dp(12) + bars.left,
                         dp(10),
-                        dp(12) + insets.getSystemWindowInsetRight(),
+                        dp(12) + bars.right,
                         dp(10));
-                sourceView.setPadding(dp(12), 0,
-                        dp(16) + insets.getSystemWindowInsetRight(),
-                        insets.getSystemWindowInsetBottom());
-                gutterView.setPadding(dp(8), 0, dp(8), insets.getSystemWindowInsetBottom());
+                sourceList.setPadding(0, 0, dp(16) + bars.right, bars.bottom);
                 return insets;
             }
         });
@@ -643,7 +683,7 @@ public final class SourceActivity extends Activity {
     }
 
     private int gutterBg() {
-        return light ? 0xffefeff1 : 0xff202022;
+        return AppTheme.gutterBg(light);
     }
 
     private int restoreSource(Bundle state) {
@@ -698,6 +738,93 @@ public final class SourceActivity extends Activity {
                 throw new IllegalArgumentException("Page offset missing for page " + (page + 1));
             }
             return pageOffsets.get(page);
+        }
+    }
+
+    private final class SourceLineAdapter extends BaseAdapter {
+        private int startLine = 1;
+        private final List<String> lines = new ArrayList<>();
+
+        void setPage(int startLine, List<String> sourceLines) {
+            this.startLine = startLine;
+            lines.clear();
+            lines.addAll(sourceLines);
+            notifyDataSetChanged();
+        }
+
+        @Override
+        public int getCount() {
+            return lines.size();
+        }
+
+        @Override
+        public Object getItem(int position) {
+            return lines.get(position);
+        }
+
+        @Override
+        public long getItemId(int position) {
+            return startLine + position;
+        }
+
+        @Override
+        public View getView(int position, View convertView, ViewGroup parent) {
+            LineRow row;
+            if (convertView instanceof LinearLayout && convertView.getTag() instanceof LineRow) {
+                row = (LineRow) convertView.getTag();
+            } else {
+                row = new LineRow();
+                row.root.setTag(row);
+            }
+            row.bind(startLine + position, lines.get(position));
+            return row.root;
+        }
+    }
+
+    private final class LineRow {
+        final LinearLayout root;
+        final TextView gutter;
+        final TextView source;
+
+        LineRow() {
+            root = new LinearLayout(SourceActivity.this);
+            root.setOrientation(LinearLayout.HORIZONTAL);
+            root.setGravity(Gravity.TOP);
+            root.setPadding(0, dp(1), dp(16), dp(1));
+            root.setMinimumWidth(dp(820));
+
+            gutter = new TextView(SourceActivity.this);
+            gutter.setTextColor(AppTheme.gutter(light));
+            gutter.setBackgroundColor(gutterBg());
+            gutter.setTextSize(12);
+            gutter.setGravity(Gravity.TOP | Gravity.END);
+            gutter.setTypeface(Typeface.MONOSPACE);
+            gutter.setIncludeFontPadding(false);
+            gutter.setSingleLine(true);
+            gutter.setPadding(dp(8), dp(2), dp(8), dp(2));
+            root.addView(gutter, new LinearLayout.LayoutParams(dp(68), LinearLayout.LayoutParams.WRAP_CONTENT));
+
+            View divider = new View(SourceActivity.this);
+            divider.setBackgroundColor(AppTheme.border(light));
+            root.addView(divider, new LinearLayout.LayoutParams(dp(1), LinearLayout.LayoutParams.MATCH_PARENT));
+
+            source = new TextView(SourceActivity.this);
+            source.setTextColor(AppTheme.secondary(light));
+            source.setTextSize(12);
+            source.setTypeface(Typeface.MONOSPACE);
+            source.setTextIsSelectable(true);
+            source.setIncludeFontPadding(false);
+            source.setSingleLine(true);
+            source.setHorizontallyScrolling(true);
+            source.setPadding(dp(12), dp(2), dp(16), dp(2));
+            root.addView(source, new LinearLayout.LayoutParams(
+                    LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT));
+        }
+
+        void bind(int lineNumber, String text) {
+            gutter.setText(String.valueOf(lineNumber));
+            source.setText(text);
         }
     }
 }

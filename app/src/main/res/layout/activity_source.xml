@@ -1,0 +1,129 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/source_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <LinearLayout
+        android:id="@+id/source_header"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingLeft="14dp"
+        android:paddingTop="10dp"
+        android:paddingRight="14dp"
+        android:paddingBottom="8dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent">
+
+        <TextView
+            android:id="@+id/source_title"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_marginRight="12dp"
+            android:layout_weight="1"
+            android:ellipsize="middle"
+            android:gravity="center_vertical"
+            android:singleLine="true"
+            android:textSize="16sp"
+            android:textStyle="bold" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/source_close"
+            style="@style/Widget.XYZShow.IconButton" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/source_pager_host"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:paddingLeft="12dp"
+        android:paddingTop="10dp"
+        android:paddingRight="12dp"
+        android:paddingBottom="10dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/source_header">
+
+        <LinearLayout
+            android:id="@+id/source_pager_bar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingLeft="8dp"
+            android:paddingTop="8dp"
+            android:paddingRight="10dp"
+            android:paddingBottom="8dp">
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/source_first"
+                style="@style/Widget.XYZShow.IconButton"
+                android:layout_marginRight="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/source_prev"
+                style="@style/Widget.XYZShow.IconButton"
+                android:layout_marginRight="8dp" />
+
+            <TextView
+                android:id="@+id/source_pager"
+                android:layout_width="0dp"
+                android:layout_height="42dp"
+                android:layout_weight="1"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:singleLine="true"
+                android:textSize="13sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/source_next"
+                style="@style/Widget.XYZShow.IconButton"
+                android:layout_marginRight="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/source_search"
+                style="@style/Widget.XYZShow.IconButton"
+                android:layout_marginRight="8dp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/source_last"
+                style="@style/Widget.XYZShow.IconButton" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/source_host"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/source_pager_host">
+
+        <HorizontalScrollView
+            android:id="@+id/source_horizontal"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <ListView
+                android:id="@+id/source_list"
+                android:layout_width="wrap_content"
+                android:layout_height="match_parent"
+                android:minWidth="820dp" />
+        </HorizontalScrollView>
+
+        <ProgressBar
+            android:id="@+id/source_loading"
+            android:layout_width="42dp"
+            android:layout_height="42dp"
+            android:layout_gravity="center"
+            android:indeterminate="true"
+            android:visibility="gone" />
+    </FrameLayout>
+</androidx.constraintlayout.widget.ConstraintLayout>

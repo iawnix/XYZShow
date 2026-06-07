@@ -1,0 +1,178 @@
+<?xml version="1.0" encoding="utf-8"?>
+<androidx.constraintlayout.widget.ConstraintLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:id="@+id/root_layout"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <TextView
+        android:id="@+id/title_view"
+        android:layout_width="0dp"
+        android:layout_height="32dp"
+        android:ellipsize="middle"
+        android:gravity="center"
+        android:singleLine="true"
+        android:textSize="15sp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toTopOf="parent" />
+
+    <LinearLayout
+        android:id="@+id/top_toolbar"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center"
+        android:orientation="horizontal"
+        android:paddingLeft="8dp"
+        android:paddingTop="6dp"
+        android:paddingRight="8dp"
+        android:paddingBottom="6dp"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/title_view">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_open"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_style"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_reset"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_theme"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_source"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_details"
+            style="@style/Widget.XYZShow.IconButton" />
+    </LinearLayout>
+
+    <FrameLayout
+        android:id="@+id/view_host"
+        android:layout_width="0dp"
+        android:layout_height="0dp"
+        app:layout_constraintBottom_toTopOf="@id/controls"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent"
+        app:layout_constraintTop_toBottomOf="@id/top_toolbar">
+
+        <ProgressBar
+            android:id="@+id/loading_view"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="center"
+            android:indeterminate="true"
+            android:max="100"
+            android:visibility="gone" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:id="@+id/controls"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingLeft="8dp"
+        android:paddingTop="8dp"
+        android:paddingRight="8dp"
+        android:paddingBottom="8dp"
+        app:layout_constraintBottom_toTopOf="@id/vibration_panel"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_prev"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_play"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_next"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@id/btn_vibration_controls"
+            style="@style/Widget.XYZShow.IconButton"
+            android:layout_marginRight="8dp" />
+
+        <SeekBar
+            android:id="@+id/frame_seek"
+            android:layout_width="0dp"
+            android:layout_height="42dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/frame_view"
+            android:layout_width="126dp"
+            android:layout_height="42dp"
+            android:gravity="center"
+            android:text="1/1"
+            android:textSize="13sp" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/vibration_panel"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:paddingLeft="12dp"
+        android:paddingTop="6dp"
+        android:paddingRight="12dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone"
+        app:layout_constraintBottom_toTopOf="@id/status_view"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent">
+
+        <SeekBar
+            android:id="@+id/amplitude_seek"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_marginRight="10dp"
+            android:layout_weight="1"
+            android:max="100" />
+
+        <SeekBar
+            android:id="@+id/speed_seek"
+            android:layout_width="0dp"
+            android:layout_height="40dp"
+            android:layout_weight="1"
+            android:max="100" />
+    </LinearLayout>
+
+    <TextView
+        android:id="@+id/status_view"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:ellipsize="end"
+        android:maxLines="2"
+        android:paddingLeft="10dp"
+        android:paddingTop="4dp"
+        android:paddingRight="10dp"
+        android:paddingBottom="8dp"
+        android:singleLine="false"
+        android:textSize="12sp"
+        app:layout_constraintBottom_toBottomOf="parent"
+        app:layout_constraintEnd_toEndOf="parent"
+        app:layout_constraintStart_toStartOf="parent" />
+</androidx.constraintlayout.widget.ConstraintLayout>

@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">XYZShow</string>
+    <string name="load_failed_status">Load failed\n%1$s\nUse the source-text button to inspect this file.</string>
 </resources>

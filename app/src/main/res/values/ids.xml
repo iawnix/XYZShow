@@ -5,6 +5,7 @@
     <item name="btn_prev" type="id" />
     <item name="btn_play" type="id" />
     <item name="btn_next" type="id" />
+    <item name="btn_vibration_controls" type="id" />
     <item name="btn_reset" type="id" />
     <item name="btn_theme" type="id" />
     <item name="btn_details" type="id" />

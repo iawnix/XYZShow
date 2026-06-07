@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="app_bg">#1C1C1E</color>
+    <color name="app_panel">#242426</color>
+    <color name="app_button">#2C2C2E</color>
+    <color name="app_button_pressed">#3A3A3C</color>
+    <color name="app_button_focused">#33363A</color>
+    <color name="app_button_disabled">#252527</color>
+    <color name="app_border">#545458</color>
+    <color name="app_border_soft">#3A3A3C</color>
+    <color name="app_text">#F2F2F7</color>
+    <color name="app_text_disabled">#6E6E73</color>
+    <color name="app_secondary">#C7C7CC</color>
+    <color name="app_gutter">#8E8E93</color>
+    <color name="app_gutter_bg">#202022</color>
+    <color name="app_rail">#EE242426</color>
+    <color name="app_active_pressed">#1F7A3A</color>
+    <color name="app_active">#164F2B</color>
+    <color name="app_spectrum_bg">#242426</color>
+    <color name="app_spectrum_imag">#FF9F0A</color>
+    <color name="app_spectrum_bar">#64D2FF</color>
+</resources>

@@ -1,71 +1,51 @@
 package io.iaw.molview;
 
-import android.app.Activity;
 import android.content.res.Configuration;
 import android.content.Intent;
 import android.content.res.ColorStateList;
 import android.database.Cursor;
 import android.graphics.Color;
 import android.graphics.drawable.GradientDrawable;
-import android.graphics.drawable.StateListDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.OpenableColumns;
-import android.text.TextUtils;
-import android.view.Gravity;
 import android.view.HapticFeedbackConstants;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
-import android.widget.Button;
 import android.widget.FrameLayout;
-import android.widget.ImageButton;
-import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ProgressBar;
 import android.widget.SeekBar;
 import android.widget.TextView;
 import android.widget.Toast;
 
-import java.io.ByteArrayOutputStream;
+import androidx.activity.ComponentActivity;
+import androidx.activity.result.ActivityResult;
+import androidx.activity.result.ActivityResultLauncher;
+import androidx.activity.result.contract.ActivityResultContracts;
+import androidx.constraintlayout.widget.ConstraintLayout;
+import androidx.core.graphics.Insets;
+import androidx.core.view.WindowInsetsCompat;
+
+import com.google.android.material.button.MaterialButton;
+
+import java.io.FilterInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.Reader;
 import java.nio.charset.StandardCharsets;
 import java.util.Locale;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
-public final class MainActivity extends Activity implements View.OnClickListener, SeekBar.OnSeekBarChangeListener, MoleculeView.GestureListener {
-    private static final int REQUEST_OPEN = 41;
-    private static final int COLOR_BG = 0xff1c1c1e;
-    private static final int COLOR_PANEL = 0xff242426;
-    private static final int COLOR_BUTTON = 0xff2c2c2e;
-    private static final int COLOR_BUTTON_PRESSED = 0xff3a3a3c;
-    private static final int COLOR_BUTTON_FOCUSED = 0xff33363a;
-    private static final int COLOR_BUTTON_DISABLED = 0xff252527;
-    private static final int COLOR_BORDER = 0xff545458;
-    private static final int COLOR_BORDER_SOFT = 0xff3a3a3c;
-    private static final int COLOR_TEXT = 0xfff2f2f7;
-    private static final int COLOR_TEXT_SECONDARY = 0xffaeaeb2;
-    private static final int COLOR_TEXT_DISABLED = 0xff6e6e73;
-    private static final int COLOR_ACCENT = 0xff0a84ff;
-    private static final int COLOR_ACCENT_ACTIVE = 0xff30d158;
-    private static final int COLOR_LIGHT_BG = 0xfff6f6f7;
-    private static final int COLOR_LIGHT_PANEL = 0xffe9e9eb;
-    private static final int COLOR_LIGHT_BUTTON = 0xfffdfdfd;
-    private static final int COLOR_LIGHT_BUTTON_PRESSED = 0xffd8d8dc;
-    private static final int COLOR_LIGHT_BUTTON_FOCUSED = 0xffeef5ff;
-    private static final int COLOR_LIGHT_BUTTON_DISABLED = 0xffededf0;
-    private static final int COLOR_LIGHT_BORDER = 0xffc7c7cc;
-    private static final int COLOR_LIGHT_BORDER_SOFT = 0xffd1d1d6;
-    private static final int COLOR_LIGHT_TEXT = 0xff1d1d1f;
-    private static final int COLOR_LIGHT_TEXT_SECONDARY = 0xff6e6e73;
-    private static final int COLOR_LIGHT_TEXT_DISABLED = 0xffa1a1a6;
+public final class MainActivity extends ComponentActivity implements View.OnClickListener, SeekBar.OnSeekBarChangeListener, MoleculeView.GestureListener {
     private static final String DEFAULT_ASSET = "samples/dopamine.xyz";
-    private static final int MAX_PARSE_BYTES = 8 * 1024 * 1024;
+    private static final int MAX_PARSE_BYTES = 100 * 1024 * 1024;
     private static final String STATE_SOURCE_KIND = "source_kind";
     private static final String STATE_SOURCE_URI = "source_uri";
     private static final String STATE_ASSET_PATH = "asset_path";
@@ -75,12 +55,14 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private static final String STATE_FRAME_INDEX = "frame_index";
     private static final String STATE_VIBRATION_INDEX = "vibration_index";
     private static final String STATE_DISPLAY_MODE = "display_mode";
-    private static final String STATE_YAW = "yaw";
-    private static final String STATE_PITCH = "pitch";
     private static final String STATE_ZOOM = "zoom";
     private static final String STATE_PAN_X = "pan_x";
     private static final String STATE_PAN_Y = "pan_y";
+    private static final String STATE_ORIENTATION = "orientation";
     private static final String STATE_SESSION_ONLY_SOURCE = "session_only_source";
+    private static final String STATE_VIBRATION_AMPLITUDE = "vibration_amplitude";
+    private static final String STATE_PLAYBACK_SPEED = "playback_speed";
+    private static final String STATE_VIBRATION_PANEL_VISIBLE = "vibration_panel_visible";
 
     private static LoadedMolecule lastLoadedMolecule;
     private static String lastLoadedKey = "";
@@ -92,21 +74,25 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private TextView titleView;
     private TextView statusView;
     private TextView frameView;
-    private ImageButton openButton;
-    private ImageButton prevButton;
-    private ImageButton playButton;
-    private ImageButton nextButton;
-    private ImageButton modeButton;
-    private ImageButton resetButton;
-    private ImageButton themeButton;
-    private ImageButton sourceButton;
-    private ImageButton infoButton;
+    private MaterialButton openButton;
+    private MaterialButton prevButton;
+    private MaterialButton playButton;
+    private MaterialButton nextButton;
+    private MaterialButton vibrationControlsButton;
+    private MaterialButton modeButton;
+    private MaterialButton resetButton;
+    private MaterialButton themeButton;
+    private MaterialButton sourceButton;
+    private MaterialButton infoButton;
     private ProgressBar loadingView;
-    private LinearLayout rootLayout;
+    private ConstraintLayout rootLayout;
     private LinearLayout controls;
+    private LinearLayout vibrationPanel;
     private LinearLayout topToolBar;
     private FrameLayout viewHost;
     private SeekBar frameSeek;
+    private SeekBar amplitudeSeek;
+    private SeekBar speedSeek;
     private Molecule current;
     private String currentFileName = "";
     private String currentSourceLabel = "";
@@ -122,20 +108,32 @@ public final class MainActivity extends Activity implements View.OnClickListener
     private int pendingFrameIndex;
     private int pendingVibrationIndex;
     private int pendingDisplayMode;
-    private float pendingYaw;
-    private float pendingPitch;
     private float pendingZoom;
     private float pendingPanX;
     private float pendingPanY;
+    private float[] pendingOrientation;
     private int vibrationIndex;
-    private int vibrationTick;
+    private float animationPhase;
+    private float vibrationAmplitude = 1f;
+    private float playbackSpeed = 1f;
+    private boolean vibrationPanelVisible;
+    private ActivityResultLauncher<Intent> openDocumentLauncher;
+    private ActivityResultLauncher<Intent> detailsLauncher;
 
     private final Runnable playTick = new PlaybackTick();
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        AppTheme.bind(this);
+        openDocumentLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                this::handleOpenDocumentResult);
+        detailsLauncher = registerForActivityResult(
+                new ActivityResultContracts.StartActivityForResult(),
+                this::handleDetailsResult);
         lightBackground = AppTheme.isLight(this);
+        restoreUiState(savedInstanceState);
         configureSystemBars();
         buildLayout();
         if (!restoreLoadedMolecule(savedInstanceState) && !openFromViewIntent(getIntent())) {
@@ -157,12 +155,14 @@ public final class MainActivity extends Activity implements View.OnClickListener
         outState.putInt(STATE_FRAME_INDEX, moleculeView == null ? 0 : moleculeView.getFrameIndex());
         outState.putInt(STATE_VIBRATION_INDEX, vibrationIndex);
         outState.putInt(STATE_DISPLAY_MODE, moleculeView == null ? 0 : moleculeView.getDisplayMode());
-        outState.putFloat(STATE_YAW, moleculeView == null ? 0f : moleculeView.getYaw());
-        outState.putFloat(STATE_PITCH, moleculeView == null ? 0f : moleculeView.getPitch());
         outState.putFloat(STATE_ZOOM, moleculeView == null ? 1f : moleculeView.getZoom());
         outState.putFloat(STATE_PAN_X, moleculeView == null ? 0f : moleculeView.getPanX());
         outState.putFloat(STATE_PAN_Y, moleculeView == null ? 0f : moleculeView.getPanY());
+        outState.putFloatArray(STATE_ORIENTATION, moleculeView == null ? null : moleculeView.getOrientationMatrix());
         outState.putBoolean(STATE_SESSION_ONLY_SOURCE, sessionOnlySource);
+        outState.putFloat(STATE_VIBRATION_AMPLITUDE, vibrationAmplitude);
+        outState.putFloat(STATE_PLAYBACK_SPEED, playbackSpeed);
+        outState.putBoolean(STATE_VIBRATION_PANEL_VISIBLE, vibrationPanelVisible);
     }
 
     @Override
@@ -204,115 +204,64 @@ public final class MainActivity extends Activity implements View.OnClickListener
     }
 
     private void buildLayout() {
-        rootLayout = new LinearLayout(this);
-        rootLayout.setOrientation(LinearLayout.VERTICAL);
-        rootLayout.setBackgroundColor(COLOR_BG);
+        setContentView(R.layout.activity_main);
+        rootLayout = findViewById(R.id.root_layout);
+        titleView = findViewById(R.id.title_view);
+        topToolBar = findViewById(R.id.top_toolbar);
+        viewHost = findViewById(R.id.view_host);
+        loadingView = findViewById(R.id.loading_view);
+        controls = findViewById(R.id.controls);
+        playButton = findViewById(R.id.btn_play);
+        prevButton = findViewById(R.id.btn_prev);
+        nextButton = findViewById(R.id.btn_next);
+        vibrationControlsButton = findViewById(R.id.btn_vibration_controls);
+        frameSeek = findViewById(R.id.frame_seek);
+        frameView = findViewById(R.id.frame_view);
+        vibrationPanel = findViewById(R.id.vibration_panel);
+        amplitudeSeek = findViewById(R.id.amplitude_seek);
+        speedSeek = findViewById(R.id.speed_seek);
+        statusView = findViewById(R.id.status_view);
+        openButton = findViewById(R.id.btn_open);
+        modeButton = findViewById(R.id.btn_style);
+        resetButton = findViewById(R.id.btn_reset);
+        themeButton = findViewById(R.id.btn_theme);
+        sourceButton = findViewById(R.id.btn_source);
+        infoButton = findViewById(R.id.btn_details);
 
-        viewHost = new FrameLayout(this);
         moleculeView = new MoleculeView(this);
         moleculeView.setGestureListener(this);
-        viewHost.addView(moleculeView, new FrameLayout.LayoutParams(
+        viewHost.addView(moleculeView, 0, new FrameLayout.LayoutParams(
                 FrameLayout.LayoutParams.MATCH_PARENT,
                 FrameLayout.LayoutParams.MATCH_PARENT
         ));
 
-        openButton = railButton("Open", R.drawable.ic_folder_open);
-        openButton.setId(R.id.btn_open);
-        openButton.setOnClickListener(this);
-        modeButton = railButton(styleButtonText(), R.drawable.ic_style);
-        modeButton.setId(R.id.btn_style);
-        modeButton.setOnClickListener(this);
-        resetButton = railButton("Reset view", R.drawable.ic_reset);
-        resetButton.setId(R.id.btn_reset);
-        resetButton.setOnClickListener(this);
-        themeButton = railButton("Toggle background", R.drawable.ic_bg_dark);
-        themeButton.setId(R.id.btn_theme);
-        themeButton.setOnClickListener(this);
-        sourceButton = railButton("Source text", R.drawable.ic_source);
-        sourceButton.setId(R.id.btn_source);
-        sourceButton.setOnClickListener(this);
-        infoButton = railButton("Details", R.drawable.ic_info);
-        infoButton.setId(R.id.btn_details);
-        infoButton.setOnClickListener(this);
+        configureIconButton(openButton, "Open", R.drawable.ic_folder_open);
+        configureIconButton(modeButton, styleButtonText(), R.drawable.ic_style);
+        configureIconButton(resetButton, "Reset view", R.drawable.ic_reset);
+        configureIconButton(themeButton, "Toggle background", R.drawable.ic_bg_dark);
+        configureIconButton(sourceButton, "Source text", R.drawable.ic_source);
+        configureIconButton(infoButton, "Details", R.drawable.ic_info);
+        configureIconButton(playButton, "Play", R.drawable.ic_play);
+        configureIconButton(prevButton, "Previous mode", R.drawable.ic_prev);
+        configureIconButton(nextButton, "Next mode", R.drawable.ic_next);
+        configureIconButton(vibrationControlsButton, "Vibration controls", R.drawable.ic_tune);
 
-        topToolBar = new LinearLayout(this);
-        topToolBar.setOrientation(LinearLayout.HORIZONTAL);
-        topToolBar.setGravity(Gravity.CENTER);
-        topToolBar.setPadding(dp(8), dp(6), dp(8), dp(6));
-        topToolBar.setBackground(railBackground());
-        topToolBar.addView(openButton, railLayout());
-        topToolBar.addView(modeButton, railLayout());
-        topToolBar.addView(resetButton, railLayout());
-        topToolBar.addView(themeButton, railLayout());
-        topToolBar.addView(sourceButton, railLayout());
-        topToolBar.addView(infoButton, railLayoutLast());
-
-        titleView = label("", 15, COLOR_TEXT);
-        titleView.setGravity(Gravity.CENTER);
-        titleView.setBackgroundColor(COLOR_PANEL);
-        titleView.setSingleLine(true);
-        titleView.setEllipsize(TextUtils.TruncateAt.MIDDLE);
-
-        loadingView = new ProgressBar(this);
-        loadingView.setIndeterminate(true);
-        loadingView.setVisibility(View.GONE);
-        FrameLayout.LayoutParams loadingParams = new FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER);
-        viewHost.addView(loadingView, loadingParams);
-        rootLayout.addView(titleView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                dp(32)
-        ));
-        rootLayout.addView(topToolBar, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
-        rootLayout.addView(viewHost, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-        ));
-
-        controls = row();
-        controls.setBackgroundColor(COLOR_PANEL);
-        controls.setPadding(dp(8), dp(8), dp(8), dp(8));
-        playButton = railButton("Play", R.drawable.ic_play);
-        playButton.setId(R.id.btn_play);
-        playButton.setOnClickListener(this);
-        prevButton = railButton("Previous mode", R.drawable.ic_prev);
-        prevButton.setId(R.id.btn_prev);
-        prevButton.setOnClickListener(this);
-        nextButton = railButton("Next mode", R.drawable.ic_next);
-        nextButton.setId(R.id.btn_next);
-        nextButton.setOnClickListener(this);
-        frameSeek = new SeekBar(this);
         frameSeek.setOnSeekBarChangeListener(this);
         styleSeekBar(frameSeek);
-        frameView = label("1/1", 13, COLOR_TEXT_SECONDARY);
-        frameView.setGravity(Gravity.CENTER);
-        controls.addView(prevButton, railLayout());
-        controls.addView(playButton, railLayout());
-        controls.addView(nextButton, railLayout());
-        controls.addView(frameSeek, new LinearLayout.LayoutParams(0, dp(42), 1f));
-        controls.addView(frameView, new LinearLayout.LayoutParams(dp(126), dp(42)));
+        amplitudeSeek.setProgress(amplitudeProgress());
+        amplitudeSeek.setContentDescription("Vibration amplitude");
+        amplitudeSeek.setTooltipText("Vibration amplitude");
+        amplitudeSeek.setOnSeekBarChangeListener(this);
+        styleSeekBar(amplitudeSeek);
+        speedSeek.setProgress(speedProgress());
+        speedSeek.setContentDescription("Animation speed");
+        speedSeek.setTooltipText("Animation speed");
+        speedSeek.setOnSeekBarChangeListener(this);
+        styleSeekBar(speedSeek);
+        vibrationPanel.setVisibility(vibrationPanelVisible ? View.VISIBLE : View.GONE);
 
-        statusView = label("", 12, COLOR_TEXT_SECONDARY);
-        statusView.setBackgroundColor(COLOR_PANEL);
-        statusView.setPadding(dp(10), dp(4), dp(10), dp(8));
-        statusView.setSingleLine(false);
-        statusView.setMaxLines(3);
-        statusView.setEllipsize(TextUtils.TruncateAt.END);
-        applySystemInsets(rootLayout, titleView, topToolBar, controls, statusView);
-
-        rootLayout.addView(controls, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
-        rootLayout.addView(statusView, new LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-        ));
+        applySystemInsets(rootLayout, titleView, topToolBar, controls, vibrationPanel, statusView);
         applyChromeTheme();
-        setContentView(rootLayout);
     }
 
     private void configureSystemBars() {
@@ -324,6 +273,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
             final TextView title,
             final LinearLayout toolbar,
             final LinearLayout controls,
+            final LinearLayout vibrationPanel,
             final TextView status
     ) {
         final int titleLeft = dp(12);
@@ -346,13 +296,16 @@ public final class MainActivity extends Activity implements View.OnClickListener
         root.setOnApplyWindowInsetsListener(new View.OnApplyWindowInsetsListener() {
             @Override
             public WindowInsets onApplyWindowInsets(View view, WindowInsets insets) {
-                int left = insets.getSystemWindowInsetLeft();
-                int top = insets.getSystemWindowInsetTop();
-                int right = insets.getSystemWindowInsetRight();
-                int bottom = insets.getSystemWindowInsetBottom();
+                WindowInsetsCompat compatInsets = WindowInsetsCompat.toWindowInsetsCompat(insets, view);
+                Insets bars = compatInsets.getInsets(WindowInsetsCompat.Type.systemBars());
+                int left = bars.left;
+                int top = bars.top;
+                int right = bars.right;
+                int bottom = bars.bottom;
                 title.setPadding(titleLeft + left, titleTop + top, titleRight + right, titleBottom);
                 toolbar.setPadding(toolbarLeft + left, toolbarTop, toolbarRight + right, toolbarBottom);
                 controls.setPadding(controlsLeft + left, controlsTop, controlsRight + right, controlsBottom);
+                vibrationPanel.setPadding(controlsLeft + left, controlsTop, controlsRight + right, controlsBottom);
                 status.setPadding(statusLeft + left, statusTop, statusRight + right, statusBottom + bottom);
                 return insets;
             }
@@ -378,6 +331,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         } else if (id == R.id.btn_next) {
             stopPlayback();
             setFrame(navigationIndex() + 1);
+        } else if (id == R.id.btn_vibration_controls) {
+            vibrationPanelVisible = !vibrationPanelVisible;
+            updateVibrationPanel();
         } else if (id == R.id.btn_reset) {
             moleculeView.resetView();
         } else if (id == R.id.btn_theme) {
@@ -393,14 +349,25 @@ public final class MainActivity extends Activity implements View.OnClickListener
 
     @Override
     public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
-        if (fromUser) {
+        if (seekBar == frameSeek && fromUser) {
             setFrame(progress);
+        } else if (seekBar == amplitudeSeek) {
+            vibrationAmplitude = amplitudeFromProgress(progress);
+            if (moleculeView != null) {
+                moleculeView.setVibrationAmplitude(vibrationAmplitude);
+            }
+            updateStatus();
+        } else if (seekBar == speedSeek) {
+            playbackSpeed = speedFromProgress(progress);
+            updateStatus();
         }
     }
 
     @Override
     public void onStartTrackingTouch(SeekBar seekBar) {
-        stopPlayback();
+        if (seekBar == frameSeek) {
+            stopPlayback();
+        }
     }
 
     @Override
@@ -430,13 +397,12 @@ public final class MainActivity extends Activity implements View.OnClickListener
                 "text/x-gaussian-output",
                 "application/octet-stream"
         });
-        startActivityForResult(intent, REQUEST_OPEN);
+        openDocumentLauncher.launch(intent);
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
-        super.onActivityResult(requestCode, resultCode, data);
-        if (requestCode != REQUEST_OPEN || resultCode != RESULT_OK || data == null || data.getData() == null) {
+    private void handleOpenDocumentResult(ActivityResult result) {
+        Intent data = result.getData();
+        if (result.getResultCode() != RESULT_OK || data == null || data.getData() == null) {
             return;
         }
         Uri uri = data.getData();
@@ -546,11 +512,10 @@ public final class MainActivity extends Activity implements View.OnClickListener
         pendingFrameIndex = state.getInt(STATE_FRAME_INDEX, 0);
         pendingVibrationIndex = state.getInt(STATE_VIBRATION_INDEX, 0);
         pendingDisplayMode = state.getInt(STATE_DISPLAY_MODE, 0);
-        pendingYaw = state.getFloat(STATE_YAW, -0.55f);
-        pendingPitch = state.getFloat(STATE_PITCH, 0.45f);
         pendingZoom = state.getFloat(STATE_ZOOM, 1f);
         pendingPanX = state.getFloat(STATE_PAN_X, 0f);
         pendingPanY = state.getFloat(STATE_PAN_Y, 0f);
+        pendingOrientation = state.getFloatArray(STATE_ORIENTATION);
     }
 
     private void loadMoleculeAsync(final MoleculeLoader loader, final String sourceLabel, final String fileName) {
@@ -591,8 +556,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
                             String message = loadErrorMessage(ex);
                             Toast.makeText(MainActivity.this, message, Toast.LENGTH_LONG).show();
                             if (statusView != null) {
-                                statusView.setText("Load failed\n" + message
-                                        + "\nUse the source-text button to inspect this file.");
+                                statusView.setText(getString(R.string.load_failed_status, message));
                             }
                         }
                     });
@@ -605,6 +569,8 @@ public final class MainActivity extends Activity implements View.OnClickListener
         this.loading = loading;
         if (loadingView != null) {
             loadingView.setVisibility(loading ? View.VISIBLE : View.GONE);
+            loadingView.setIndeterminate(true);
+            loadingView.setProgress(0);
         }
         if (openButton != null) {
             openButton.setEnabled(!loading);
@@ -631,6 +597,32 @@ public final class MainActivity extends Activity implements View.OnClickListener
         updateChromeVisibility();
     }
 
+    private void updateLoadProgress(long bytesRead, long totalBytes) {
+        if (totalBytes <= 0L || loadingView == null) {
+            return;
+        }
+        final int progress = (int) Math.max(0L, Math.min(100L, bytesRead * 100L / totalBytes));
+        handler.post(new Runnable() {
+            @Override
+            public void run() {
+                if (!loading || loadingView == null) {
+                    return;
+                }
+                loadingView.setIndeterminate(false);
+                loadingView.setProgress(progress);
+            }
+        });
+    }
+
+    private void restoreUiState(Bundle state) {
+        if (state == null) {
+            return;
+        }
+        vibrationAmplitude = clamp(state.getFloat(STATE_VIBRATION_AMPLITUDE, 1f), 0f, 2.5f);
+        playbackSpeed = clamp(state.getFloat(STATE_PLAYBACK_SPEED, 1f), 0.25f, 2.5f);
+        vibrationPanelVisible = state.getBoolean(STATE_VIBRATION_PANEL_VISIBLE, false);
+    }
+
     private void updateChromeVisibility() {
         int visibility = chromeHidden ? View.GONE : View.VISIBLE;
         if (titleView != null) {
@@ -642,29 +634,47 @@ public final class MainActivity extends Activity implements View.OnClickListener
         if (controls != null) {
             controls.setVisibility(visibility);
         }
+        updateVibrationPanel();
         if (statusView != null) {
             statusView.setVisibility(visibility);
         }
     }
 
-    private Molecule parseXyzFile(String text, String sourceName) throws IOException {
-        try {
-            return MoleculeParser.parseXyzOnly(text, sourceName);
-        } catch (IOException ex) {
-            throw new IOException("Only XYZ files are supported in this version. " + ex.getMessage());
+    private void updateVibrationPanel() {
+        boolean hasVibration = current != null && current.hasVibrations();
+        if (!hasVibration) {
+            vibrationPanelVisible = false;
+        }
+        if (vibrationControlsButton != null) {
+            vibrationControlsButton.setEnabled(!loading && hasVibration);
+            styleMaterialButton(vibrationControlsButton, vibrationPanelVisible);
+        }
+        if (vibrationPanel != null) {
+            vibrationPanel.setVisibility(!chromeHidden && vibrationPanelVisible && hasVibration
+                    ? View.VISIBLE
+                    : View.GONE);
+            vibrationPanel.setBackgroundColor(AppTheme.panel(lightBackground));
+        }
+        if (amplitudeSeek != null) {
+            amplitudeSeek.setProgress(amplitudeProgress());
+            amplitudeSeek.setEnabled(!loading && hasVibration);
+        }
+        if (speedSeek != null) {
+            speedSeek.setProgress(speedProgress());
+            speedSeek.setEnabled(!loading && hasVibration);
         }
     }
 
-    private Molecule parseMoleculeFile(String text, String sourceName) throws IOException {
-        if (MoleculeParser.looksLikeGaussianOutput(text, sourceName)) {
+    private Molecule parseMoleculeFile(Reader reader, String sourceName, boolean gaussian) throws IOException {
+        if (gaussian) {
             try {
-                return MoleculeParser.parseGaussianOutput(text, sourceName);
+                return MoleculeParser.parseGaussianOutput(reader, sourceName);
             } catch (IOException ex) {
                 throw new IOException("Cannot read Gaussian out/log file. " + ex.getMessage());
             }
         }
         try {
-            return MoleculeParser.parseXyzOnly(text, sourceName);
+            return MoleculeParser.parseXyzOnly(reader, sourceName);
         } catch (IOException ex) {
             throw new IOException("Only XYZ and Gaussian out/log files are supported. " + ex.getMessage());
         }
@@ -682,8 +692,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
         currentSourceTitle = titleText();
         int restoreVibration = pendingRestoreView ? pendingVibrationIndex : 0;
         int restoreFrame = pendingRestoreView ? pendingFrameIndex : 0;
-        vibrationTick = 0;
+        animationPhase = 0f;
         moleculeView.setMolecule(molecule);
+        moleculeView.setVibrationAmplitude(vibrationAmplitude);
         if (pendingRestoreView) {
             moleculeView.setDisplayMode(pendingDisplayMode);
             updateModeButton();
@@ -699,11 +710,13 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
         setFrame(molecule.hasVibrations() ? restoreVibration : restoreFrame);
         if (pendingRestoreView) {
-            moleculeView.restoreViewState(pendingYaw, pendingPitch, pendingZoom, pendingPanX, pendingPanY);
+            moleculeView.restoreViewState(pendingOrientation, pendingZoom, pendingPanX, pendingPanY);
             pendingRestoreView = false;
+            pendingOrientation = null;
         }
         updateNavigationButtons();
         updatePlaybackButton();
+        updateVibrationPanel();
     }
 
     private String titleText() {
@@ -723,9 +736,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
             int count = current.vibrationCount();
             int safe = count == 0 ? 0 : (frame % count + count) % count;
             vibrationIndex = safe;
-            vibrationTick = 0;
+            animationPhase = (float) (Math.PI * 0.5);
             moleculeView.setVibrationMode(safe);
-            moleculeView.setVibrationPhase((float) (Math.PI * 0.5));
+            moleculeView.setVibrationPhase(animationPhase);
             frameSeek.setProgress(safe);
             frameView.setText(vibrationFrameText(safe));
             updateStatus();
@@ -736,7 +749,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         int safe = current.frameCount() == 0 ? 0 : (frame % current.frameCount() + current.frameCount()) % current.frameCount();
         moleculeView.setFrameIndex(safe);
         frameSeek.setProgress(safe);
-        frameView.setText((safe + 1) + "/" + current.frameCount());
+        frameView.setText(String.format(Locale.US, "%d/%d", safe + 1, current.frameCount()));
         updateStatus();
         updateNavigationButtons();
     }
@@ -777,9 +790,9 @@ public final class MainActivity extends Activity implements View.OnClickListener
                 : current.frameCount() > 1
         );
         playButton.setEnabled(canPlay);
-        playButton.setImageResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
+        playButton.setIconResource(playing ? R.drawable.ic_pause : R.drawable.ic_play);
         playButton.setContentDescription(playing ? "Pause animation" : "Play animation");
-        playButton.setBackground(playing ? activeRailButtonBackground() : railButtonBackground());
+        styleMaterialButton(playButton, playing);
     }
 
     private void updateNavigationButtons() {
@@ -811,24 +824,22 @@ public final class MainActivity extends Activity implements View.OnClickListener
             return;
         }
         StringBuilder text = new StringBuilder();
-        text.append(compactText(currentFileName.isEmpty() ? current.title : currentFileName, 48))
-                .append(" | ").append(current.sourceType)
-                .append(" | ").append(currentSourceLabel).append('\n');
+        text.append(compactText(currentFileName.isEmpty() ? current.title : currentFileName, 36))
+                .append(" | ").append(current.sourceType);
         if (sessionOnlySource) {
-            text.append("Session-only | reopen if restore fails\n");
-        }
-        text.append("A").append(current.atomCount())
-                .append(" | B").append(current.bonds.size())
-                .append(" | F").append(current.frameCount());
-        if (current.hasVibrations()) {
-            text.append(" | M").append(current.vibrationCount());
+            text.append(" | Session");
         }
         text.append('\n');
+        text.append("A").append(current.atomCount())
+                .append("  B").append(current.bonds.size())
+                .append("  F").append(current.frameCount());
         if (current.hasVibrations()) {
-            text.append(vibrationStatusText()).append('\n');
+            text.append("  M").append(current.vibrationCount())
+                    .append("  ").append(compactText(vibrationStatusText(), 46));
+        } else {
+            text.append("  ").append(moleculeView.modeName())
+                    .append("  ").append(lightBackground ? "White" : "Black");
         }
-        text.append("Style: ").append(moleculeView.modeName())
-                .append(" | ").append(backgroundModeText());
         statusView.setText(text.toString());
     }
 
@@ -865,7 +876,24 @@ public final class MainActivity extends Activity implements View.OnClickListener
         Intent intent = new Intent(this, DetailsActivity.class);
         intent.putExtra(DetailsActivity.EXTRA_TITLE, titleText());
         intent.putExtra(DetailsActivity.EXTRA_SUMMARY, detailText());
-        startActivity(intent);
+        intent.putExtra(DetailsActivity.EXTRA_ELEMENTS, elementSymbols());
+        intent.putExtra(DetailsActivity.EXTRA_ELEMENT_COLORS, elementColors());
+        intent.putExtra(DetailsActivity.EXTRA_FREQUENCIES, vibrationFrequencies());
+        intent.putExtra(DetailsActivity.EXTRA_IR_INTENSITIES, vibrationIntensities());
+        intent.putExtra(DetailsActivity.EXTRA_SELECTED_MODE, vibrationIndex);
+        detailsLauncher.launch(intent);
+    }
+
+    private void handleDetailsResult(ActivityResult result) {
+        Intent data = result.getData();
+        if (result.getResultCode() != RESULT_OK || data == null || current == null || !current.hasVibrations()) {
+            return;
+        }
+        int mode = data.getIntExtra(DetailsActivity.EXTRA_SELECTED_MODE, -1);
+        if (mode >= 0) {
+            stopPlayback();
+            setFrame(mode);
+        }
     }
 
     private void showSourcePage() {
@@ -946,6 +974,48 @@ public final class MainActivity extends Activity implements View.OnClickListener
         return text.length() == 0 ? "None" : text.toString();
     }
 
+    private String[] elementSymbols() {
+        if (current == null) {
+            return new String[0];
+        }
+        java.util.List<String> elements = current.elementsInUse();
+        return elements.toArray(new String[0]);
+    }
+
+    private int[] elementColors() {
+        if (current == null) {
+            return new int[0];
+        }
+        java.util.List<String> elements = current.elementsInUse();
+        int[] colors = new int[elements.size()];
+        for (int i = 0; i < elements.size(); i++) {
+            colors[i] = ElementTable.color(elements.get(i));
+        }
+        return colors;
+    }
+
+    private float[] vibrationFrequencies() {
+        if (current == null || !current.hasVibrations()) {
+            return new float[0];
+        }
+        float[] values = new float[current.vibrationCount()];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = current.vibrationAt(i).frequency;
+        }
+        return values;
+    }
+
+    private float[] vibrationIntensities() {
+        if (current == null || !current.hasVibrations()) {
+            return new float[0];
+        }
+        float[] values = new float[current.vibrationCount()];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = current.vibrationAt(i).irIntensity;
+        }
+        return values;
+    }
+
     private String vibrationStatusText() {
         Molecule.VibrationMode vibration = current == null ? null : current.vibrationAt(vibrationIndex);
         if (vibration == null) {
@@ -1006,15 +1076,15 @@ public final class MainActivity extends Activity implements View.OnClickListener
         if (themeButton == null) {
             return;
         }
-        themeButton.setImageResource(lightBackground ? R.drawable.ic_bg_light : R.drawable.ic_bg_dark);
+        themeButton.setIconResource(lightBackground ? R.drawable.ic_bg_light : R.drawable.ic_bg_dark);
         themeButton.setContentDescription(lightBackground ? "Switch to black background" : "Switch to white background");
     }
 
     private void applyChromeTheme() {
-        int bg = lightBackground ? COLOR_LIGHT_BG : COLOR_BG;
-        int panel = lightBackground ? COLOR_LIGHT_PANEL : COLOR_PANEL;
-        int title = lightBackground ? COLOR_LIGHT_TEXT : COLOR_TEXT;
-        int secondary = lightBackground ? COLOR_LIGHT_TEXT_SECONDARY : COLOR_TEXT_SECONDARY;
+        int bg = AppTheme.bg(lightBackground);
+        int panel = AppTheme.panel(lightBackground);
+        int title = AppTheme.text(lightBackground);
+        int secondary = AppTheme.secondary(lightBackground);
 
         if (rootLayout != null) {
             rootLayout.setBackgroundColor(bg);
@@ -1039,14 +1109,20 @@ public final class MainActivity extends Activity implements View.OnClickListener
         if (frameView != null) {
             frameView.setTextColor(secondary);
         }
+        if (vibrationPanel != null) {
+            vibrationPanel.setBackgroundColor(panel);
+        }
         refreshButtonStyles(rootLayout);
         updateThemeButton();
         updateModeButton();
         updatePlaybackButton();
+        updateVibrationPanel();
         if (sourceButton != null) {
             sourceButton.setEnabled(hasSourceReference());
         }
         styleSeekBar(frameSeek);
+        styleSeekBar(amplitudeSeek);
+        styleSeekBar(speedSeek);
         configureSystemBars();
         if (moleculeView != null) {
             moleculeView.setBackgroundMode(lightBackground ? MoleculeView.BACKGROUND_LIGHT : MoleculeView.BACKGROUND_DARK);
@@ -1058,15 +1134,8 @@ public final class MainActivity extends Activity implements View.OnClickListener
         if (view == null) {
             return;
         }
-        if (view instanceof Button) {
-            Button button = (Button) view;
-            button.setTextColor(buttonTextColors());
-            button.setBackground(buttonBackground());
-        }
-        if (view instanceof ImageButton) {
-            ImageButton button = (ImageButton) view;
-            button.setImageTintList(buttonTextColors());
-            button.setBackground(railButtonBackground());
+        if (view instanceof MaterialButton) {
+            styleMaterialButton((MaterialButton) view, false);
         }
         if (view instanceof ViewGroup) {
             ViewGroup group = (ViewGroup) view;
@@ -1076,18 +1145,24 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
     }
 
-    private String readUri(Uri uri) throws IOException {
-        try (InputStream input = getContentResolver().openInputStream(uri)) {
-            if (input == null) {
-                throw new IOException("Cannot open file");
-            }
-            return readAll(input);
-        } catch (SecurityException ex) {
-            if (sessionOnlySource) {
-                throw new IOException("Android no longer grants access to this session-only file. Reopen it from the folder button.", ex);
-            }
-            throw ex;
+    private LoadedMolecule readAndParse(InputStream input, long totalBytes, String sourceName, boolean gaussian) throws IOException {
+        try (CountingInputStream counting = new CountingInputStream(input, totalBytes);
+             Reader reader = new InputStreamReader(counting, StandardCharsets.UTF_8)) {
+            return new LoadedMolecule(parseMoleculeFile(reader, sourceName, gaussian));
         }
+    }
+
+    private long contentLength(Uri uri) {
+        try (Cursor cursor = getContentResolver().query(uri, new String[]{OpenableColumns.SIZE}, null, null, null)) {
+            if (cursor != null && cursor.moveToFirst()) {
+                int index = cursor.getColumnIndex(OpenableColumns.SIZE);
+                if (index >= 0 && !cursor.isNull(index)) {
+                    return cursor.getLong(index);
+                }
+            }
+        } catch (RuntimeException ignored) {
+        }
+        return -1L;
     }
 
     private interface MoleculeLoader {
@@ -1152,8 +1227,18 @@ public final class MainActivity extends Activity implements View.OnClickListener
 
         @Override
         public LoadedMolecule load() throws IOException {
-            String text = readUri(uri);
-            return new LoadedMolecule(parseMoleculeFile(text, name));
+            long totalBytes = contentLength(uri);
+            try (InputStream input = getContentResolver().openInputStream(uri)) {
+                if (input == null) {
+                    throw new IOException("Cannot open file");
+                }
+                return readAndParse(input, totalBytes, name, MoleculeParser.looksLikeGaussianName(name));
+            } catch (SecurityException ex) {
+                if (sessionOnlySource) {
+                    throw new IOException("Android no longer grants access to this session-only file. Reopen it from the folder button.", ex);
+                }
+                throw ex;
+            }
         }
 
         @Override
@@ -1177,8 +1262,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
         @Override
         public LoadedMolecule load() throws IOException {
             try (InputStream input = getAssets().open(assetPath)) {
-                String text = readAll(input);
-                return new LoadedMolecule(parseXyzFile(text, assetPath));
+                return readAndParse(input, -1L, assetPath, MoleculeParser.looksLikeGaussianName(assetPath));
             }
         }
 
@@ -1193,17 +1277,40 @@ public final class MainActivity extends Activity implements View.OnClickListener
         }
     }
 
-    private String readAll(InputStream input) throws IOException {
-        ByteArrayOutputStream output = new ByteArrayOutputStream();
-        byte[] buffer = new byte[8192];
-        int read;
-        while ((read = input.read(buffer)) != -1) {
-            if (output.size() + read > MAX_PARSE_BYTES) {
+    private final class CountingInputStream extends FilterInputStream {
+        private final long totalBytes;
+        private long bytesRead;
+
+        CountingInputStream(InputStream input, long totalBytes) {
+            super(input);
+            this.totalBytes = totalBytes;
+        }
+
+        @Override
+        public int read() throws IOException {
+            int value = super.read();
+            if (value != -1) {
+                noteBytes(1);
+            }
+            return value;
+        }
+
+        @Override
+        public int read(byte[] buffer, int offset, int length) throws IOException {
+            int read = super.read(buffer, offset, length);
+            if (read > 0) {
+                noteBytes(read);
+            }
+            return read;
+        }
+
+        private void noteBytes(int count) throws IOException {
+            bytesRead += count;
+            if (bytesRead > MAX_PARSE_BYTES) {
                 throw new IOException("File is too large to parse in the viewer. Use the source-text page to inspect it.");
             }
-            output.write(buffer, 0, read);
+            updateLoadProgress(bytesRead, totalBytes);
         }
-        return output.toString(StandardCharsets.UTF_8.name());
     }
 
     private String displayName(Uri uri) {
@@ -1223,55 +1330,44 @@ public final class MainActivity extends Activity implements View.OnClickListener
         return path == null ? "Molecule" : path;
     }
 
-    private LinearLayout row() {
-        LinearLayout row = new LinearLayout(this);
-        row.setOrientation(LinearLayout.HORIZONTAL);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        return row;
-    }
-
-    private ImageButton railButton(String description, int imageResId) {
-        ImageButton button = new ImageButton(this);
-        button.setImageResource(imageResId);
-        button.setImageTintList(buttonTextColors());
-        button.setBackground(railButtonBackground());
-        button.setScaleType(ImageView.ScaleType.CENTER);
-        button.setPadding(dp(10), dp(10), dp(10), dp(10));
+    private void configureIconButton(MaterialButton button, String description, int imageResId) {
+        button.setIconResource(imageResId);
+        button.setIconGravity(MaterialButton.ICON_GRAVITY_TEXT_TOP);
+        button.setIconPadding(0);
+        button.setInsetTop(0);
+        button.setInsetBottom(0);
+        button.setPadding(0, 0, 0, 0);
         button.setMinimumWidth(0);
         button.setMinimumHeight(0);
         button.setHapticFeedbackEnabled(true);
         button.setContentDescription(description);
         button.setTooltipText(description);
-        return button;
-    }
-
-    private TextView label(String text, int sp, int color) {
-        TextView view = new TextView(this);
-        view.setText(text);
-        view.setTextSize(sp);
-        view.setTextColor(color);
-        view.setGravity(Gravity.CENTER_VERTICAL);
-        return view;
-    }
-
-    private LinearLayout.LayoutParams railLayout() {
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(dp(40), dp(40));
-        params.setMargins(0, 0, dp(8), 0);
-        return params;
-    }
-
-    private LinearLayout.LayoutParams railLayoutLast() {
-        return new LinearLayout.LayoutParams(dp(40), dp(40));
+        button.setOnClickListener(this);
+        styleMaterialButton(button, false);
     }
 
     private void styleSeekBar(SeekBar seekBar) {
         if (seekBar == null) {
             return;
         }
-        seekBar.setProgressTintList(ColorStateList.valueOf(COLOR_ACCENT));
-        seekBar.setThumbTintList(ColorStateList.valueOf(COLOR_ACCENT));
-        seekBar.setProgressBackgroundTintList(ColorStateList.valueOf(lightBackground ? COLOR_LIGHT_BORDER_SOFT : COLOR_BORDER_SOFT));
+        seekBar.setProgressTintList(ColorStateList.valueOf(AppTheme.accent(this)));
+        seekBar.setThumbTintList(ColorStateList.valueOf(AppTheme.accent(this)));
+        seekBar.setProgressBackgroundTintList(ColorStateList.valueOf(AppTheme.borderSoft(lightBackground)));
         seekBar.setSplitTrack(false);
+    }
+
+    private void styleMaterialButton(MaterialButton button, boolean active) {
+        button.setIconTint(buttonTextColors());
+        button.setTextColor(buttonTextColors());
+        button.setBackgroundTintList(ColorStateList.valueOf(active
+                ? AppTheme.active(lightBackground)
+                : AppTheme.button(lightBackground)));
+        button.setStrokeColor(ColorStateList.valueOf(active
+                ? AppTheme.accentActive(this)
+                : AppTheme.border(lightBackground)));
+        button.setStrokeWidth(dp(1));
+        button.setCornerRadius(dp(20));
+        button.setRippleColor(ColorStateList.valueOf(AppTheme.accent(this)));
     }
 
     private ColorStateList buttonTextColors() {
@@ -1283,99 +1379,57 @@ public final class MainActivity extends Activity implements View.OnClickListener
                         new int[]{}
                 },
                 new int[]{
-                        lightBackground ? COLOR_LIGHT_TEXT_DISABLED : COLOR_TEXT_DISABLED,
-                        lightBackground ? COLOR_LIGHT_TEXT : COLOR_TEXT,
-                        lightBackground ? COLOR_LIGHT_TEXT : COLOR_TEXT,
-                        lightBackground ? COLOR_LIGHT_TEXT : COLOR_TEXT
+                        AppTheme.textDisabled(lightBackground),
+                        AppTheme.text(lightBackground),
+                        AppTheme.text(lightBackground),
+                        AppTheme.text(lightBackground)
                 }
         );
-    }
-
-    private StateListDrawable buttonBackground() {
-        StateListDrawable states = new StateListDrawable();
-        states.addState(new int[]{-android.R.attr.state_enabled}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON_DISABLED : COLOR_BUTTON_DISABLED,
-                lightBackground ? COLOR_LIGHT_BORDER_SOFT : COLOR_BORDER_SOFT
-        ));
-        states.addState(new int[]{android.R.attr.state_pressed}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON_PRESSED : COLOR_BUTTON_PRESSED,
-                COLOR_ACCENT
-        ));
-        states.addState(new int[]{android.R.attr.state_focused}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON_FOCUSED : COLOR_BUTTON_FOCUSED,
-                COLOR_ACCENT
-        ));
-        states.addState(new int[]{}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON : COLOR_BUTTON,
-                lightBackground ? COLOR_LIGHT_BORDER : COLOR_BORDER
-        ));
-        return states;
-    }
-
-    private StateListDrawable railButtonBackground() {
-        StateListDrawable states = new StateListDrawable();
-        states.addState(new int[]{-android.R.attr.state_enabled}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON_DISABLED : COLOR_BUTTON_DISABLED,
-                lightBackground ? COLOR_LIGHT_BORDER_SOFT : COLOR_BORDER_SOFT,
-                dp(20)
-        ));
-        states.addState(new int[]{android.R.attr.state_pressed}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON_PRESSED : COLOR_BUTTON_PRESSED,
-                COLOR_ACCENT,
-                dp(20)
-        ));
-        states.addState(new int[]{android.R.attr.state_focused}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON_FOCUSED : COLOR_BUTTON_FOCUSED,
-                COLOR_ACCENT,
-                dp(20)
-        ));
-        states.addState(new int[]{}, roundedRect(
-                lightBackground ? COLOR_LIGHT_BUTTON : COLOR_BUTTON,
-                lightBackground ? COLOR_LIGHT_BORDER : COLOR_BORDER,
-                dp(20)
-        ));
-        return states;
-    }
-
-    private StateListDrawable activeRailButtonBackground() {
-        StateListDrawable states = new StateListDrawable();
-        states.addState(new int[]{android.R.attr.state_pressed}, roundedRect(
-                lightBackground ? 0xffb7f1c5 : 0xff1f7a3a,
-                COLOR_ACCENT_ACTIVE,
-                dp(20)
-        ));
-        states.addState(new int[]{}, roundedRect(
-                lightBackground ? 0xffd8f8df : 0xff164f2b,
-                COLOR_ACCENT_ACTIVE,
-                dp(20)
-        ));
-        return states;
     }
 
     private GradientDrawable railBackground() {
         GradientDrawable drawable = new GradientDrawable();
         drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setColor(lightBackground ? 0xeeffffff : 0xee242426);
+        drawable.setColor(AppTheme.rail(lightBackground));
         drawable.setCornerRadius(dp(26));
-        drawable.setStroke(dp(1), lightBackground ? COLOR_LIGHT_BORDER : COLOR_BORDER_SOFT);
-        return drawable;
-    }
-
-    private GradientDrawable roundedRect(int fill, int stroke) {
-        return roundedRect(fill, stroke, dp(8));
-    }
-
-    private GradientDrawable roundedRect(int fill, int stroke, int radius) {
-        GradientDrawable drawable = new GradientDrawable();
-        drawable.setShape(GradientDrawable.RECTANGLE);
-        drawable.setColor(fill);
-        drawable.setCornerRadius(radius);
-        drawable.setStroke(dp(1), stroke);
+        drawable.setStroke(dp(1), lightBackground ? AppTheme.border(true) : AppTheme.borderSoft(false));
         return drawable;
     }
 
     private int dp(int value) {
         return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
+    private int amplitudeProgress() {
+        return Math.round(clamp(vibrationAmplitude, 0f, 2.5f) / 2.5f * 100f);
+    }
+
+    private float amplitudeFromProgress(int progress) {
+        return clamp(progress, 0, 100) / 100f * 2.5f;
+    }
+
+    private int speedProgress() {
+        return Math.round((clamp(playbackSpeed, 0.25f, 2.5f) - 0.25f) / 2.25f * 100f);
+    }
+
+    private float speedFromProgress(int progress) {
+        return 0.25f + clamp(progress, 0, 100) / 100f * 2.25f;
+    }
+
+    private long vibrationDelayMs() {
+        return Math.max(16L, Math.round(55f / clamp(playbackSpeed, 0.25f, 2.5f)));
+    }
+
+    private long frameDelayMs() {
+        return Math.max(45L, Math.round(180f / clamp(playbackSpeed, 0.25f, 2.5f)));
+    }
+
+    private static float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private static int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
     }
 
     private final class PlaybackTick implements Runnable {
@@ -1389,10 +1443,12 @@ public final class MainActivity extends Activity implements View.OnClickListener
             if (current.hasVibrations()) {
                 Molecule.VibrationMode vibration = current.vibrationAt(vibrationIndex);
                 if (vibration != null && vibration.hasDisplacement()) {
-                    vibrationTick = (vibrationTick + 1) % 48;
-                    float phase = (float) (vibrationTick * Math.PI * 2.0 / 48.0);
-                    moleculeView.setVibrationPhase(phase);
-                    handler.postDelayed(this, 55);
+                    animationPhase += (float) (Math.PI * 2.0 / 48.0 * playbackSpeed);
+                    if (animationPhase > Math.PI * 2.0) {
+                        animationPhase -= (float) (Math.PI * 2.0);
+                    }
+                    moleculeView.setVibrationPhase(animationPhase);
+                    handler.postDelayed(this, vibrationDelayMs());
                     return;
                 }
                 playing = false;
@@ -1409,7 +1465,7 @@ public final class MainActivity extends Activity implements View.OnClickListener
                 next = 0;
             }
             setFrame(next);
-            handler.postDelayed(this, 180);
+            handler.postDelayed(this, frameDelayMs());
         }
     }
 

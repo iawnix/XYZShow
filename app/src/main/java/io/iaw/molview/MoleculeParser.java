@@ -2,6 +2,7 @@ package io.iaw.molview;
 
 import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.Reader;
 import java.io.StringReader;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -27,8 +28,7 @@ final class MoleculeParser {
     }
 
     static boolean looksLikeGaussianOutput(String text, String sourceName) {
-        String lowerName = sourceName == null ? "" : sourceName.toLowerCase(Locale.US);
-        if (lowerName.endsWith(".out") || lowerName.endsWith(".log")) {
+        if (looksLikeGaussianName(sourceName)) {
             return true;
         }
         if (text == null) {
@@ -41,8 +41,19 @@ final class MoleculeParser {
                 || text.contains("Gaussian, Inc.");
     }
 
+    static boolean looksLikeGaussianName(String sourceName) {
+        String lowerName = sourceName == null ? "" : sourceName.toLowerCase(Locale.US);
+        return lowerName.endsWith(".out") || lowerName.endsWith(".log");
+    }
+
     static Molecule parseXyzOnly(String text, String sourceName) throws IOException {
-        BufferedReader reader = new BufferedReader(new StringReader(text));
+        return parseXyzOnly(new StringReader(text == null ? "" : text), sourceName);
+    }
+
+    static Molecule parseXyzOnly(Reader input, String sourceName) throws IOException {
+        BufferedReader reader = input instanceof BufferedReader
+                ? (BufferedReader) input
+                : new BufferedReader(input);
         List<Molecule.Atom> atoms = new ArrayList<>();
         List<Molecule.Frame> frames = new ArrayList<>();
         String title = sourceName;
@@ -98,22 +109,59 @@ final class MoleculeParser {
     }
 
     static Molecule parseGaussianOutput(String text, String sourceName) throws IOException {
-        List<String> lines = readLines(text);
+        return parseGaussianOutput(new StringReader(text == null ? "" : text), sourceName);
+    }
+
+    static Molecule parseGaussianOutput(Reader input, String sourceName) throws IOException {
+        PushbackLineReader lines = new PushbackLineReader(input);
         OrientationBlock lastInput = null;
         OrientationBlock lastStandard = null;
-        for (int i = 0; i < lines.size(); i++) {
-            String trimmed = lines.get(i).trim();
+        List<String> warnings = new ArrayList<>();
+        List<Molecule.VibrationMode> vibrations = new ArrayList<>();
+        GaussianInfo info = new GaussianInfo();
+        StringBuilder route = new StringBuilder();
+        boolean routeCollecting = false;
+        boolean routeDone = false;
+        String line;
+        while ((line = lines.next()) != null) {
+            if (!routeDone) {
+                String trimmed = line.trim();
+                if (!routeCollecting && trimmed.startsWith("#")) {
+                    routeCollecting = true;
+                }
+                if (routeCollecting) {
+                    if (trimmed.isEmpty()) {
+                        routeDone = true;
+                        info.route = compact(route.toString(), 96);
+                        routeCollecting = false;
+                    } else {
+                        if (route.length() > 0) {
+                            route.append(' ');
+                        }
+                        route.append(trimmed);
+                    }
+                }
+            }
+            updateGaussianInfo(line, info);
+            String trimmed = line.trim();
             if (trimmed.startsWith("Input orientation:")) {
-                OrientationBlock block = parseGaussianOrientation(lines, i);
+                OrientationBlock block = parseGaussianOrientation(lines);
                 if (block != null) {
                     lastInput = block;
                 }
             } else if (trimmed.startsWith("Standard orientation:")) {
-                OrientationBlock block = parseGaussianOrientation(lines, i);
+                OrientationBlock block = parseGaussianOrientation(lines);
                 if (block != null) {
                     lastStandard = block;
                 }
+            } else if (line.contains("Frequencies --")) {
+                OrientationBlock geometry = lastStandard != null ? lastStandard : lastInput;
+                int atomCount = geometry == null ? 0 : geometry.atoms.size();
+                parseGaussianFrequencyBlock(lines, line, atomCount, warnings, vibrations);
             }
+        }
+        if (!routeDone && info.route.isEmpty() && route.length() > 0) {
+            info.route = compact(route.toString(), 96);
         }
         OrientationBlock geometry = lastStandard != null ? lastStandard : lastInput;
         if (geometry == null || geometry.atoms.isEmpty() || geometry.xyz.length == 0) {
@@ -122,33 +170,30 @@ final class MoleculeParser {
 
         List<Molecule.Frame> frames = new ArrayList<>();
         frames.add(new Molecule.Frame(geometry.xyz));
-        List<String> warnings = new ArrayList<>();
-        List<Molecule.VibrationMode> vibrations = parseGaussianFrequencies(lines, geometry.atoms.size(), warnings);
         List<Molecule.Bond> bonds = buildAutoBonds(geometry.atoms, frames.get(0));
-        GaussianInfo info = parseGaussianInfo(lines, vibrations);
+        finishGaussianInfo(info, vibrations);
         List<String> infoLines = buildGaussianInfoLines(info, geometry, bonds, vibrations);
         infoLines.addAll(warnings);
         String title = sourceName == null || sourceName.trim().isEmpty() ? "Gaussian output" : sourceName;
         return new Molecule(title, "Gaussian", geometry.atoms, frames, bonds, vibrations, infoLines);
     }
 
-    private static GaussianInfo parseGaussianInfo(List<String> lines, List<Molecule.VibrationMode> vibrations) {
-        GaussianInfo info = new GaussianInfo();
-        info.route = parseGaussianRoute(lines);
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (trimmed.contains("Normal termination of Gaussian")) {
-                info.termination = "Normal termination";
-            } else if (trimmed.contains("Error termination")) {
-                info.termination = "Error termination";
-            } else if (trimmed.startsWith("Charge =")) {
-                parseChargeMultiplicity(trimmed, info);
-            } else if (trimmed.startsWith("SCF Done:")) {
-                parseScfDone(trimmed, info);
-            } else if (trimmed.startsWith("Zero-point correction=")) {
-                info.zeroPointCorrection = valueAfterEquals(trimmed);
-            }
+    private static void updateGaussianInfo(String line, GaussianInfo info) {
+        String trimmed = line.trim();
+        if (trimmed.contains("Normal termination of Gaussian")) {
+            info.termination = "Normal termination";
+        } else if (trimmed.contains("Error termination")) {
+            info.termination = "Error termination";
+        } else if (trimmed.startsWith("Charge =")) {
+            parseChargeMultiplicity(trimmed, info);
+        } else if (trimmed.startsWith("SCF Done:")) {
+            parseScfDone(trimmed, info);
+        } else if (trimmed.startsWith("Zero-point correction=")) {
+            info.zeroPointCorrection = valueAfterEquals(trimmed);
         }
+    }
+
+    private static void finishGaussianInfo(GaussianInfo info, List<Molecule.VibrationMode> vibrations) {
         info.frequencyCount = vibrations.size();
         info.imaginaryCount = 0;
         info.lowestFrequency = Float.NaN;
@@ -163,28 +208,6 @@ final class MoleculeParser {
         if (info.termination.isEmpty()) {
             info.termination = "Termination unknown";
         }
-        return info;
-    }
-
-    private static String parseGaussianRoute(List<String> lines) {
-        StringBuilder route = new StringBuilder();
-        boolean collecting = false;
-        for (String line : lines) {
-            String trimmed = line.trim();
-            if (!collecting && trimmed.startsWith("#")) {
-                collecting = true;
-            }
-            if (collecting) {
-                if (trimmed.isEmpty()) {
-                    break;
-                }
-                if (route.length() > 0) {
-                    route.append(' ');
-                }
-                route.append(trimmed);
-            }
-        }
-        return compact(route.toString(), 96);
     }
 
     private static void parseChargeMultiplicity(String line, GaussianInfo info) {
@@ -272,26 +295,27 @@ final class MoleculeParser {
         return lines;
     }
 
-    private static List<String> readLines(String text) throws IOException {
-        BufferedReader reader = new BufferedReader(new StringReader(text == null ? "" : text));
-        List<String> lines = new ArrayList<>();
+    private static OrientationBlock parseGaussianOrientation(PushbackLineReader reader) throws IOException {
         String line;
-        while ((line = reader.readLine()) != null) {
-            lines.add(line);
+        boolean firstDash = false;
+        boolean secondDash = false;
+        while ((line = reader.next()) != null) {
+            if (!isGaussianDash(line)) {
+                continue;
+            }
+            if (!firstDash) {
+                firstDash = true;
+            } else {
+                secondDash = true;
+                break;
+            }
         }
-        return lines;
-    }
-
-    private static OrientationBlock parseGaussianOrientation(List<String> lines, int markerIndex) throws IOException {
-        int firstDash = findGaussianDash(lines, markerIndex + 1);
-        int secondDash = firstDash < 0 ? -1 : findGaussianDash(lines, firstDash + 1);
-        if (secondDash < 0) {
+        if (!secondDash) {
             return null;
         }
         List<Molecule.Atom> atoms = new ArrayList<>();
         List<Float> coords = new ArrayList<>();
-        for (int i = secondDash + 1; i < lines.size(); i++) {
-            String line = lines.get(i);
+        while ((line = reader.next()) != null) {
             if (isGaussianDash(line)) {
                 break;
             }
@@ -320,108 +344,107 @@ final class MoleculeParser {
         return new OrientationBlock(atoms, xyz);
     }
 
-    private static int findGaussianDash(List<String> lines, int start) {
-        for (int i = Math.max(0, start); i < lines.size(); i++) {
-            if (isGaussianDash(lines.get(i))) {
-                return i;
-            }
-        }
-        return -1;
-    }
-
     private static boolean isGaussianDash(String line) {
         return line != null && line.trim().startsWith("----");
     }
 
-    private static List<Molecule.VibrationMode> parseGaussianFrequencies(
-            List<String> lines,
+    private static void parseGaussianFrequencyBlock(
+            PushbackLineReader reader,
+            String frequencyLine,
             int atomCount,
-            List<String> warnings
+            List<String> warnings,
+            List<Molecule.VibrationMode> modes
     ) throws IOException {
-        List<Molecule.VibrationMode> modes = new ArrayList<>();
-        for (int i = 0; i < lines.size(); i++) {
-            String line = lines.get(i);
-            if (!line.contains("Frequencies --")) {
-                continue;
+        float[] frequencies = valuesAfterMarker(frequencyLine);
+        if (frequencies.length == 0) {
+            return;
+        }
+        int modeCount = frequencies.length;
+        float[] reducedMasses = filled(modeCount, Float.NaN);
+        float[] forceConstants = filled(modeCount, Float.NaN);
+        float[] irIntensities = filled(modeCount, Float.NaN);
+        String line;
+        boolean foundDisplacementHeader = false;
+        while ((line = reader.next()) != null) {
+            String trimmed = line.trim();
+            if (line.contains("Frequencies --")) {
+                reader.pushBack(line);
+                break;
             }
-            float[] frequencies = valuesAfterMarker(line);
-            if (frequencies.length == 0) {
-                continue;
-            }
-            int modeCount = frequencies.length;
-            float[] reducedMasses = filled(modeCount, Float.NaN);
-            float[] forceConstants = filled(modeCount, Float.NaN);
-            float[] irIntensities = filled(modeCount, Float.NaN);
-            int displacementHeader = -1;
-
-            for (int j = i + 1; j < lines.size(); j++) {
-                String row = lines.get(j);
-                String trimmed = row.trim();
-                if (row.contains("Frequencies --")) {
-                    break;
-                }
-                if (row.contains("Red. masses --")) {
-                    copyValues(valuesAfterMarker(row), reducedMasses);
-                } else if (row.contains("Frc consts  --") || row.contains("Frc consts --")) {
-                    copyValues(valuesAfterMarker(row), forceConstants);
-                } else if (row.contains("IR Inten    --") || row.contains("IR Inten --")) {
-                    copyValues(valuesAfterMarker(row), irIntensities);
-                } else if (trimmed.startsWith("Atom") && trimmed.contains("AN")) {
-                    displacementHeader = j;
-                    break;
-                }
-            }
-
-            float[][] displacements = new float[modeCount][atomCount * 3];
-            if (displacementHeader >= 0) {
-                int rows = 0;
-                int j = displacementHeader + 1;
-                while (j < lines.size() && rows < atomCount) {
-                    String trimmed = lines.get(j).trim();
-                    if (trimmed.isEmpty() || trimmed.contains("Frequencies --") || isGaussianDash(trimmed)) {
-                        break;
-                    }
-                    String[] parts = trimmed.split("\\s+");
-                    if (parts.length < 2 + modeCount * 3) {
-                        break;
-                    }
-                    for (int mode = 0; mode < modeCount; mode++) {
-                        int source = 2 + mode * 3;
-                        int target = rows * 3;
-                        displacements[mode][target] = parseFloat(parts[source], "normal mode dx");
-                        displacements[mode][target + 1] = parseFloat(parts[source + 1], "normal mode dy");
-                        displacements[mode][target + 2] = parseFloat(parts[source + 2], "normal mode dz");
-                    }
-                    rows++;
-                    j++;
-                }
-                if (rows != atomCount) {
-                    int firstMode = modes.size() + 1;
-                    int lastMode = firstMode + modeCount - 1;
-                    warnings.add("Warning: Gaussian displacement block incomplete for modes "
-                            + firstMode + "-" + lastMode + " (" + rows + "/" + atomCount
-                            + " rows parsed); animation disabled for these modes.");
-                    displacements = new float[modeCount][atomCount * 3];
-                }
-            } else {
-                int firstMode = modes.size() + 1;
-                int lastMode = firstMode + modeCount - 1;
-                warnings.add("Warning: Gaussian displacement block missing for modes "
-                        + firstMode + "-" + lastMode
-                        + "; animation disabled for these modes.");
-            }
-
-            for (int mode = 0; mode < modeCount; mode++) {
-                modes.add(new Molecule.VibrationMode(
-                        frequencies[mode],
-                        reducedMasses[mode],
-                        forceConstants[mode],
-                        irIntensities[mode],
-                        displacements[mode]
-                ));
+            if (line.contains("Red. masses --")) {
+                copyValues(valuesAfterMarker(line), reducedMasses);
+            } else if (line.contains("Frc consts  --") || line.contains("Frc consts --")) {
+                copyValues(valuesAfterMarker(line), forceConstants);
+            } else if (line.contains("IR Inten    --") || line.contains("IR Inten --")) {
+                copyValues(valuesAfterMarker(line), irIntensities);
+            } else if (trimmed.startsWith("Atom") && trimmed.contains("AN")) {
+                foundDisplacementHeader = true;
+                break;
             }
         }
-        return modes;
+
+        float[][] displacements = new float[modeCount][Math.max(0, atomCount) * 3];
+        if (foundDisplacementHeader && atomCount > 0) {
+            int rows = 0;
+            while ((line = reader.next()) != null && rows < atomCount) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || trimmed.contains("Frequencies --") || isGaussianDash(trimmed)) {
+                    if (trimmed.contains("Frequencies --")) {
+                        reader.pushBack(line);
+                    }
+                    break;
+                }
+                String[] parts = trimmed.split("\\s+");
+                if (parts.length < 2 + modeCount * 3) {
+                    break;
+                }
+                for (int mode = 0; mode < modeCount; mode++) {
+                    int source = 2 + mode * 3;
+                    int target = rows * 3;
+                    displacements[mode][target] = parseFloat(parts[source], "normal mode dx");
+                    displacements[mode][target + 1] = parseFloat(parts[source + 1], "normal mode dy");
+                    displacements[mode][target + 2] = parseFloat(parts[source + 2], "normal mode dz");
+                }
+                rows++;
+            }
+            if (rows != atomCount) {
+                addDisplacementWarning(warnings, modes.size(), modeCount, rows, atomCount, true);
+                displacements = new float[modeCount][Math.max(0, atomCount) * 3];
+            }
+        } else {
+            addDisplacementWarning(warnings, modes.size(), modeCount, 0, atomCount, false);
+        }
+
+        for (int mode = 0; mode < modeCount; mode++) {
+            modes.add(new Molecule.VibrationMode(
+                    frequencies[mode],
+                    reducedMasses[mode],
+                    forceConstants[mode],
+                    irIntensities[mode],
+                    displacements[mode]
+            ));
+        }
+    }
+
+    private static void addDisplacementWarning(
+            List<String> warnings,
+            int existingModeCount,
+            int modeCount,
+            int rows,
+            int atomCount,
+            boolean incomplete
+    ) {
+        int firstMode = existingModeCount + 1;
+        int lastMode = firstMode + modeCount - 1;
+        if (incomplete) {
+            warnings.add("Warning: Gaussian displacement block incomplete for modes "
+                    + firstMode + "-" + lastMode + " (" + rows + "/" + atomCount
+                    + " rows parsed); animation disabled for these modes.");
+        } else {
+            warnings.add("Warning: Gaussian displacement block missing for modes "
+                    + firstMode + "-" + lastMode
+                    + "; animation disabled for these modes.");
+        }
     }
 
     private static float[] filled(int count, float value) {
@@ -612,5 +635,27 @@ final class MoleculeParser {
         int frequencyCount;
         int imaginaryCount;
         float lowestFrequency = Float.NaN;
+    }
+
+    private static final class PushbackLineReader {
+        private final BufferedReader reader;
+        private String pushedBack;
+
+        PushbackLineReader(Reader input) {
+            reader = input instanceof BufferedReader ? (BufferedReader) input : new BufferedReader(input);
+        }
+
+        String next() throws IOException {
+            if (pushedBack != null) {
+                String line = pushedBack;
+                pushedBack = null;
+                return line;
+            }
+            return reader.readLine();
+        }
+
+        void pushBack(String line) {
+            pushedBack = line;
+        }
     }
 }

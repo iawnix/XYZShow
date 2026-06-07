@@ -49,6 +49,17 @@ public final class MoleculeParserTest {
     }
 
     @Test
+    public void parsesXyzWithoutTrailingNewline() throws IOException {
+        Molecule molecule = MoleculeParser.parseXyzOnly(
+                "2\nno newline\nH 0 0 0\nH 0 0 1",
+                "no-newline.xyz");
+
+        assertEquals(2, molecule.atomCount());
+        assertEquals(1, molecule.frameCount());
+        assertEquals(1.0f, molecule.frameAt(0).xyz[5], 0.0001f);
+    }
+
+    @Test
     public void parsesGaussianGeometryAndFrequencyDisplacements() throws IOException {
         Molecule molecule = MoleculeParser.parseGaussianOutput(gaussianOutput(true), "freq.log");
 

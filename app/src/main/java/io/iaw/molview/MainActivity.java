@@ -67,6 +67,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
     private static LoadedMolecule lastLoadedMolecule;
     private static String lastLoadedKey = "";
 
+    private final ViewerState viewerState = new ViewerState();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final ExecutorService loadExecutor = Executors.newSingleThreadExecutor();
     private final AtomicInteger loadGeneration = new AtomicInteger();
@@ -163,6 +164,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         outState.putFloat(STATE_VIBRATION_AMPLITUDE, vibrationAmplitude);
         outState.putFloat(STATE_PLAYBACK_SPEED, playbackSpeed);
         outState.putBoolean(STATE_VIBRATION_PANEL_VISIBLE, vibrationPanelVisible);
+        syncViewerStateFromFields();
     }
 
     @Override
@@ -333,6 +335,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
             setFrame(navigationIndex() + 1);
         } else if (id == R.id.btn_vibration_controls) {
             vibrationPanelVisible = !vibrationPanelVisible;
+            viewerState.playback().setPanelVisible(vibrationPanelVisible);
             updateVibrationPanel();
         } else if (id == R.id.btn_reset) {
             moleculeView.resetView();
@@ -353,12 +356,14 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
             setFrame(progress);
         } else if (seekBar == amplitudeSeek) {
             vibrationAmplitude = amplitudeFromProgress(progress);
+            viewerState.playback().setAmplitude(vibrationAmplitude);
             if (moleculeView != null) {
                 moleculeView.setVibrationAmplitude(vibrationAmplitude);
             }
             updateStatus();
         } else if (seekBar == speedSeek) {
             playbackSpeed = speedFromProgress(progress);
+            viewerState.playback().setSpeed(playbackSpeed);
             updateStatus();
         }
     }
@@ -432,6 +437,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         currentSourceTitle = "Default  -  " + DEFAULT_ASSET;
         sessionOnlySource = false;
         pendingRestoreView = false;
+        viewerState.source().setAsset(DEFAULT_ASSET, currentSourceLabel, currentFileName, currentSourceTitle);
         loadMoleculeAsync(new AssetLoader(DEFAULT_ASSET), "Default", DEFAULT_ASSET);
     }
 
@@ -455,6 +461,8 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
             currentAssetPath = "";
             currentSourceLabel = sourceLabel.isEmpty() ? "File" : sourceLabel;
             currentFileName = fileName.isEmpty() ? displayName(uri) : fileName;
+            viewerState.source().setUri(uri.toString(), currentSourceLabel, currentFileName,
+                    currentSourceTitle, sessionOnlySource);
             if (displayCachedMolecule(sourceKey(SourceKind.URI, uri.toString()),
                     currentSourceLabel,
                     currentFileName,
@@ -474,6 +482,8 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
             currentAssetPath = assetPath;
             currentSourceLabel = sourceLabel.isEmpty() ? "Default" : sourceLabel;
             currentFileName = fileName.isEmpty() ? assetPath : fileName;
+            viewerState.source().setAsset(assetPath, currentSourceLabel, currentFileName,
+                    currentSourceTitle);
             if (displayCachedMolecule(sourceKey(SourceKind.ASSET, assetPath),
                     currentSourceLabel,
                     currentFileName,
@@ -505,6 +515,8 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         currentSourceTitle = currentSourceLabel + "  -  " + currentFileName;
         sessionOnlySource = sessionOnly;
         pendingRestoreView = false;
+        viewerState.source().setUri(uri == null ? "" : uri.toString(), currentSourceLabel,
+                currentFileName, currentSourceTitle, sessionOnly);
     }
 
     private void capturePendingRestore(Bundle state) {
@@ -621,6 +633,9 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         vibrationAmplitude = clamp(state.getFloat(STATE_VIBRATION_AMPLITUDE, 1f), 0f, 2.5f);
         playbackSpeed = clamp(state.getFloat(STATE_PLAYBACK_SPEED, 1f), 0.25f, 2.5f);
         vibrationPanelVisible = state.getBoolean(STATE_VIBRATION_PANEL_VISIBLE, false);
+        viewerState.playback().setAmplitude(vibrationAmplitude);
+        viewerState.playback().setSpeed(playbackSpeed);
+        viewerState.playback().setPanelVisible(vibrationPanelVisible);
     }
 
     private void updateChromeVisibility() {
@@ -644,6 +659,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         boolean hasVibration = current != null && current.hasVibrations();
         if (!hasVibration) {
             vibrationPanelVisible = false;
+            viewerState.playback().setPanelVisible(false);
         }
         if (vibrationControlsButton != null) {
             vibrationControlsButton.setEnabled(!loading && hasVibration);
@@ -682,6 +698,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
 
     private void displayMolecule(Molecule molecule, String sourceLabel, String fileName, MoleculeLoader loader) {
         current = molecule;
+        viewerState.setMolecule(molecule);
         currentSourceLabel = sourceLabel;
         currentFileName = fileName == null ? "" : fileName;
         currentSourceUri = loader instanceof UriLoader ? ((UriLoader) loader).uri : null;
@@ -690,6 +707,13 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
             sessionOnlySource = false;
         }
         currentSourceTitle = titleText();
+        if (currentSourceUri != null) {
+            viewerState.source().setUri(currentSourceUri.toString(), currentSourceLabel,
+                    currentFileName, currentSourceTitle, sessionOnlySource);
+        } else {
+            viewerState.source().setAsset(currentAssetPath, currentSourceLabel,
+                    currentFileName, currentSourceTitle);
+        }
         int restoreVibration = pendingRestoreView ? pendingVibrationIndex : 0;
         int restoreFrame = pendingRestoreView ? pendingFrameIndex : 0;
         animationPhase = 0f;
@@ -736,7 +760,9 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
             int count = current.vibrationCount();
             int safe = count == 0 ? 0 : (frame % count + count) % count;
             vibrationIndex = safe;
+            viewerState.playback().setVibrationIndex(safe);
             animationPhase = (float) (Math.PI * 0.5);
+            viewerState.playback().setPhase(animationPhase);
             moleculeView.setVibrationMode(safe);
             moleculeView.setVibrationPhase(animationPhase);
             frameSeek.setProgress(safe);
@@ -748,6 +774,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         }
         int safe = current.frameCount() == 0 ? 0 : (frame % current.frameCount() + current.frameCount()) % current.frameCount();
         moleculeView.setFrameIndex(safe);
+        viewerState.camera().setFrameIndex(safe);
         frameSeek.setProgress(safe);
         frameView.setText(String.format(Locale.US, "%d/%d", safe + 1, current.frameCount()));
         updateStatus();
@@ -917,7 +944,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
     }
 
     private boolean hasSourceReference() {
-        return currentSourceUri != null || !currentAssetPath.isEmpty();
+        return viewerState.hasSourceReference();
     }
 
     private String sourceTitleText() {
@@ -1127,7 +1154,36 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
         if (moleculeView != null) {
             moleculeView.setBackgroundMode(lightBackground ? MoleculeView.BACKGROUND_LIGHT : MoleculeView.BACKGROUND_DARK);
         }
+        viewerState.representation().setBackgroundMode(lightBackground
+                ? RepresentationState.BACKGROUND_LIGHT
+                : RepresentationState.BACKGROUND_DARK);
         updateStatus();
+    }
+
+    private void syncViewerStateFromFields() {
+        if (currentSourceUri != null) {
+            viewerState.source().setUri(currentSourceUri.toString(), currentSourceLabel,
+                    currentFileName, currentSourceTitle, sessionOnlySource);
+        } else if (!currentAssetPath.isEmpty()) {
+            viewerState.source().setAsset(currentAssetPath, currentSourceLabel,
+                    currentFileName, currentSourceTitle);
+        } else {
+            viewerState.source().clear();
+        }
+        viewerState.setMolecule(current);
+        viewerState.playback().setVibrationIndex(vibrationIndex);
+        viewerState.playback().setPhase(animationPhase);
+        viewerState.playback().setAmplitude(vibrationAmplitude);
+        viewerState.playback().setSpeed(playbackSpeed);
+        viewerState.playback().setPanelVisible(vibrationPanelVisible);
+        if (moleculeView != null) {
+            viewerState.camera().setFrameIndex(moleculeView.getFrameIndex());
+            viewerState.camera().setView(moleculeView.getOrientationMatrix(),
+                    moleculeView.getZoom(),
+                    moleculeView.getPanX(),
+                    moleculeView.getPanY());
+            viewerState.representation().setMode(moleculeView.getDisplayMode());
+        }
     }
 
     private void refreshButtonStyles(View view) {
@@ -1447,6 +1503,7 @@ public final class MainActivity extends ComponentActivity implements View.OnClic
                     if (animationPhase > Math.PI * 2.0) {
                         animationPhase -= (float) (Math.PI * 2.0);
                     }
+                    viewerState.playback().setPhase(animationPhase);
                     moleculeView.setVibrationPhase(animationPhase);
                     handler.postDelayed(this, vibrationDelayMs());
                     return;
